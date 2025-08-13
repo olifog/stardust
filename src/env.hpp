@@ -46,16 +46,52 @@ namespace stardust
 
     MDB_env *raw() const;
     DbHandle nodes() const;
-    DbHandle vecs() const;
-    DbHandle eout() const;
-    DbHandle ein() const;
-    DbHandle ctrs() const;
+    DbHandle nodeColdProps() const;
+    DbHandle nodeVectors() const;
+
+    DbHandle edgesBySrcType() const;
+    DbHandle edgesByDstType() const;
+    DbHandle edgesById() const;
+    DbHandle edgeProps() const;
+
+    DbHandle labelIds() const;
+    DbHandle labelsByName() const;
+    DbHandle relTypeIds() const;
+    DbHandle relTypesByName() const;
+    DbHandle propKeyIds() const;
+    DbHandle propKeysByName() const;
+    DbHandle vecTagIds() const;
+    DbHandle vecTagsByName() const;
+    DbHandle vecTagMeta() const;
+
+    DbHandle meta() const;
+    DbHandle labelIndex() const;
 
   private:
     static void open(MDB_txn *tx, DbHandle &out, const char *name);
 
     MDB_env *env_{};
-    DbHandle nodes_{}, vecs_{}, eout_{}, ein_{}, ctrs_{};
+    DbHandle nodes_{};
+    DbHandle nodeColdProps_{};
+    DbHandle nodeVectors_{};
+
+    DbHandle edgesBySrcType_{};
+    DbHandle edgesByDstType_{};
+    DbHandle edgesById_{};
+    DbHandle edgeProps_{};
+
+    DbHandle labelIds_{};
+    DbHandle labelsByName_{};
+    DbHandle relTypeIds_{};
+    DbHandle relTypesByName_{};
+    DbHandle propKeyIds_{};
+    DbHandle propKeysByName_{};
+    DbHandle vecTagIds_{};
+    DbHandle vecTagsByName_{};
+    DbHandle vecTagMeta_{};
+    
+    DbHandle meta_{};
+    DbHandle labelIndex_{};
   };
 
 } // namespace stardust

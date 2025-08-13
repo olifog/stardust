@@ -38,8 +38,11 @@ int main(int argc, char **argv)
   {
     auto req = cap.createNodeRequest();
     auto params = req.initParams();
-    auto vec = params.initVector();
     auto v = demoVec(8);
+    auto vecs = params.initVectors(1);
+    auto tagged = vecs[0];
+    tagged.setTagId(0);
+    auto vec = tagged.initVector();
     vec.setDim(8);
     capnp::Data::Builder data = vec.initData(v.size() * 4);
     std::memcpy(data.begin(), v.data(), v.size() * 4);
@@ -64,7 +67,6 @@ int main(int argc, char **argv)
     ap.setDst(idB);
     auto meta = ap.initMeta();
     meta.setTypeId(0);
-    meta.setWeight(1.0f);
     add.send().wait(client.getWaitScope());
   }
 
@@ -73,7 +75,7 @@ int main(int argc, char **argv)
     auto req = cap.neighborsRequest();
     auto np = req.initParams();
     np.setNode(idA);
-    np.setDirection(0); // OUT
+    np.setDirection(stardust::rpc::Direction::OUT);
     np.setLimit(16);
     auto resp = req.send().wait(client.getWaitScope());
     auto list = resp.getResult().getNeighbors();
