@@ -633,23 +633,21 @@ namespace stardust
       return std::find(params.relTypeIn.begin(), params.relTypeIn.end(), t) != params.relTypeIn.end();
     };
 
-    auto passesLabelFilter = [&](uint64_t nodeId) -> bool
-    {
-      if (params.neighborHas.labelIds.empty())
-        return true;
-      Txn tx(env_.raw(), false);
-      auto nk = key_nodes_be(nodeId);
-      MDB_val k{nk.size(), const_cast<char *>(nk.data())}, v{};
-      int rc = mdb_get(tx.get(), env_.nodes(), &k, &v);
-      if (rc)
-        return false;
-      NodeHeader hdr = decode_node_header(std::string_view(reinterpret_cast<const char *>(v.mv_data), v.mv_size));
-      return labels_contains_all(hdr.labels.labelIds, params.neighborHas.labelIds);
-    };
-
     auto scanDir = [&](bool outDir)
     {
       Txn tx(env_.raw(), false);
+      auto passesLabelFilter = [&](uint64_t nodeId) -> bool
+      {
+        if (params.neighborHas.labelIds.empty())
+          return true;
+        auto nk = key_nodes_be(nodeId);
+        MDB_val k{nk.size(), const_cast<char *>(nk.data())}, v{};
+        int rc = mdb_get(tx.get(), env_.nodes(), &k, &v);
+        if (rc)
+          return false;
+        NodeHeader hdr = decode_node_header(std::string_view(reinterpret_cast<const char *>(v.mv_data), v.mv_size));
+        return labels_contains_all(hdr.labels.labelIds, params.neighborHas.labelIds);
+      };
       MDB_cursor *cur{};
       auto dbi = outDir ? env_.edgesBySrcType() : env_.edgesByDstType();
       int rc = mdb_cursor_open(tx.get(), dbi, &cur);
@@ -894,6 +892,122 @@ namespace stardust
     if (rc != 0 && rc != MDB_NOTFOUND)
       throw MdbError(mdb_strerror(rc));
 
+    // delete edges where node is src or dst, plus their props and id records
+    {
+      std::unordered_set<uint64_t> edgeIdsToDelete;
+
+      // scan edges where this node is src
+      {
+        MDB_cursor *cur{};
+        rc = mdb_cursor_open(tx.get(), env_.edgesBySrcType(), &cur);
+        if (rc)
+          throw MdbError(mdb_strerror(rc));
+        std::string start = key_edge_by_src_type_be(params.id, 0, 0, 0);
+        MDB_val ck{start.size(), const_cast<char *>(start.data())}, cv{};
+        rc = mdb_cursor_get(cur, &ck, &cv, MDB_SET_RANGE);
+        while (rc == 0)
+        {
+          const unsigned char *kb = static_cast<const unsigned char *>(ck.mv_data);
+          if (ck.mv_size < 8 + 4 + 8 + 8)
+            break;
+          uint64_t src = read_be64(kb + 0);
+          if (src != params.id)
+            break;
+          uint32_t typeId = read_be32(kb + 8);
+          uint64_t dst = read_be64(kb + 12);
+          uint64_t eid = read_be64(kb + 20);
+
+          // delete current src index entry
+          int drc = mdb_cursor_del(cur, 0);
+          if (drc)
+            throw MdbError(mdb_strerror(drc));
+
+          // delete matching dst index entry
+          auto dk = key_edge_by_dst_type_be(dst, typeId, src, eid);
+          MDB_val dk0{dk.size(), const_cast<char *>(dk.data())};
+          drc = mdb_del(tx.get(), env_.edgesByDstType(), &dk0, nullptr);
+          if (drc != 0 && drc != MDB_NOTFOUND)
+            throw MdbError(mdb_strerror(drc));
+
+          edgeIdsToDelete.insert(eid);
+          rc = mdb_cursor_get(cur, &ck, &cv, MDB_NEXT);
+        }
+        mdb_cursor_close(cur);
+      }
+
+      // scan edges where this node is dst (remaining ones not covered above)
+      {
+        MDB_cursor *cur{};
+        rc = mdb_cursor_open(tx.get(), env_.edgesByDstType(), &cur);
+        if (rc)
+          throw MdbError(mdb_strerror(rc));
+        std::string start = key_edge_by_dst_type_be(params.id, 0, 0, 0);
+        MDB_val ck{start.size(), const_cast<char *>(start.data())}, cv{};
+        rc = mdb_cursor_get(cur, &ck, &cv, MDB_SET_RANGE);
+        while (rc == 0)
+        {
+          const unsigned char *kb = static_cast<const unsigned char *>(ck.mv_data);
+          if (ck.mv_size < 8 + 4 + 8 + 8)
+            break;
+          uint64_t dst = read_be64(kb + 0);
+          if (dst != params.id)
+            break;
+          uint32_t typeId = read_be32(kb + 8);
+          uint64_t src = read_be64(kb + 12);
+          uint64_t eid = read_be64(kb + 20);
+
+          // delete current dst index entry
+          int drc = mdb_cursor_del(cur, 0);
+          if (drc)
+            throw MdbError(mdb_strerror(drc));
+
+          // delete matching src index entry
+          auto sk = key_edge_by_src_type_be(src, typeId, dst, eid);
+          MDB_val sk0{sk.size(), const_cast<char *>(sk.data())};
+          drc = mdb_del(tx.get(), env_.edgesBySrcType(), &sk0, nullptr);
+          if (drc != 0 && drc != MDB_NOTFOUND)
+            throw MdbError(mdb_strerror(drc));
+
+          edgeIdsToDelete.insert(eid);
+          rc = mdb_cursor_get(cur, &ck, &cv, MDB_NEXT);
+        }
+        mdb_cursor_close(cur);
+      }
+
+      // delete edgesById and edgeProps for collected eids
+      for (uint64_t eid : edgeIdsToDelete)
+      {
+        auto idk = key_edge_by_id_be(eid);
+        MDB_val idk0{idk.size(), const_cast<char *>(idk.data())};
+        int drc = mdb_del(tx.get(), env_.edgesById(), &idk0, nullptr);
+        if (drc != 0 && drc != MDB_NOTFOUND)
+          throw MdbError(mdb_strerror(drc));
+
+        // delete edge props by range
+        MDB_cursor *pcur{};
+        drc = mdb_cursor_open(tx.get(), env_.edgeProps(), &pcur);
+        if (drc)
+          throw MdbError(mdb_strerror(drc));
+        std::string start = key_edge_prop_be(eid, 0);
+        MDB_val pk{start.size(), const_cast<char *>(start.data())}, pv{};
+        drc = mdb_cursor_get(pcur, &pk, &pv, MDB_SET_RANGE);
+        while (drc == 0)
+        {
+          const unsigned char *kb = static_cast<const unsigned char *>(pk.mv_data);
+          if (pk.mv_size < 8 + 4)
+            break;
+          uint64_t major = read_be64(kb + 0);
+          if (major != eid)
+            break;
+          int erc = mdb_cursor_del(pcur, 0);
+          if (erc)
+            throw MdbError(mdb_strerror(erc));
+          drc = mdb_cursor_get(pcur, &pk, &pv, MDB_NEXT);
+        }
+        mdb_cursor_close(pcur);
+      }
+    }
+
     // delete cold props by range
     {
       MDB_cursor *cur{};
@@ -943,6 +1057,11 @@ namespace stardust
       }
       mdb_cursor_close(cur);
     }
+
+    // delete node record (after edges and props)
+    rc = mdb_del(tx.get(), env_.nodes(), &k, nullptr);
+    if (rc != 0 && rc != MDB_NOTFOUND)
+      throw MdbError(mdb_strerror(rc));
 
     tx.commit();
   }

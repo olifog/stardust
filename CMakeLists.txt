@@ -32,13 +32,46 @@ target_link_libraries(stardust PUBLIC
   PkgConfig::LMDB
 )
 
-add_executable(stardustd
+add_library(stardust_rpc STATIC
   src/server.cpp
+)
+target_link_libraries(stardust_rpc PUBLIC stardust CapnProto::capnp-rpc CapnProto::kj-async)
+target_include_directories(stardust_rpc PUBLIC ${CMAKE_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR})
+
+add_executable(stardustd
   src/main.cpp
 )
-target_link_libraries(stardustd PRIVATE stardust CapnProto::capnp-rpc CapnProto::kj-async)
+target_link_libraries(stardustd PRIVATE stardust_rpc)
 
 add_executable(stardust_client
   src/client_example.cpp
 )
 target_link_libraries(stardust_client PRIVATE stardust CapnProto::capnp-rpc CapnProto::kj-async)
+
+# --- Tests (GoogleTest) ---
+
+include(FetchContent)
+FetchContent_Declare(
+  googletest
+  URL https://github.com/google/googletest/archive/52eb8108c5bdec04579160ae17225d66034bd723.zip
+)
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(googletest)
+
+enable_testing()
+
+add_executable(
+  stardust_tests
+  tests/hello_test.cpp
+  tests/integration_rpc_test.cpp
+)
+target_link_libraries(
+  stardust_tests
+  PRIVATE
+    GTest::gtest_main
+    stardust
+    stardust_rpc
+)
+
+include(GoogleTest)
+gtest_discover_tests(stardust_tests)
