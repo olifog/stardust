@@ -523,9 +523,46 @@ namespace stardust
   void Store::upsertVector(const UpsertVectorParams &params)
   {
     Txn tx(env_.raw(), true);
+
+    const auto &data = params.vector.data;
+    if ((data.size() % 4) != 0)
+      throw MdbError("vector byte length must be a multiple of 4");
+    uint32_t dimFromBytes = static_cast<uint32_t>(data.size() / 4);
+    if (params.vector.dim != 0 && params.vector.dim != dimFromBytes)
+      throw MdbError("provided dim does not match data length");
+
+    uint32_t enforcedDim = dimFromBytes;
+    {
+      auto mk = key_vec_tag_meta_be(params.tagId);
+      MDB_val mk0{mk.size(), const_cast<char *>(mk.data())}, mv{};
+      int mrc = mdb_get(tx.get(), env_.vecTagMeta(), &mk0, &mv);
+      if (mrc == 0)
+      {
+        if (mv.mv_size < 4)
+          throw MdbError("corrupt vecTagMeta entry");
+        uint32_t storedDim = read_be32(static_cast<const unsigned char *>(mv.mv_data));
+        if (storedDim != enforcedDim)
+          throw MdbError("vector dim does not match tagId meta");
+      }
+      else if (mrc == MDB_NOTFOUND)
+      {
+        std::string dimv;
+        dimv.reserve(4);
+        put_be32(dimv, enforcedDim);
+        MDB_val mvk{mk.size(), const_cast<char *>(mk.data())};
+        MDB_val mvv{dimv.size(), const_cast<char *>(dimv.data())};
+        int prc = mdb_put(tx.get(), env_.vecTagMeta(), &mvk, &mvv, 0);
+        if (prc)
+          throw MdbError(mdb_strerror(prc));
+      }
+      else
+      {
+        throw MdbError(mdb_strerror(mrc));
+      }
+    }
+
     auto vk = key_node_vector_be(params.id, params.tagId);
     MDB_val k{vk.size(), const_cast<char *>(vk.data())};
-    const auto &data = params.vector.data;
     MDB_val v{data.size(), const_cast<char *>(data.data())};
     int rc = mdb_put(tx.get(), env_.nodeVectors(), &k, &v, 0);
     if (rc)
@@ -817,7 +854,15 @@ namespace stardust
         uint32_t tagId = read_be32(kb + 8);
         TaggedVector tv{};
         tv.tagId = tagId;
-        tv.vector.dim = 0;
+        {
+          auto mk = key_vec_tag_meta_be(tagId);
+          MDB_val mk0{mk.size(), const_cast<char *>(mk.data())}, mv{};
+          int mrc = mdb_get(tx.get(), env_.vecTagMeta(), &mk0, &mv);
+          if (mrc == 0 && mv.mv_size >= 4)
+            tv.vector.dim = static_cast<uint16_t>(read_be32(static_cast<const unsigned char *>(mv.mv_data)));
+          else
+            tv.vector.dim = 0;
+        }
         tv.vector.data.assign(reinterpret_cast<const char *>(v.mv_data), v.mv_size);
         out.vectors.push_back(std::move(tv));
         rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
@@ -835,7 +880,15 @@ namespace stardust
         {
           TaggedVector tv{};
           tv.tagId = tagId;
-          tv.vector.dim = 0;
+          {
+            auto mk = key_vec_tag_meta_be(tagId);
+            MDB_val mk0{mk.size(), const_cast<char *>(mk.data())}, mv{};
+            int mrc = mdb_get(tx.get(), env_.vecTagMeta(), &mk0, &mv);
+            if (mrc == 0 && mv.mv_size >= 4)
+              tv.vector.dim = static_cast<uint16_t>(read_be32(static_cast<const unsigned char *>(mv.mv_data)));
+            else
+              tv.vector.dim = 0;
+          }
           tv.vector.data.assign(reinterpret_cast<const char *>(v.mv_data), v.mv_size);
           out.vectors.push_back(std::move(tv));
         }

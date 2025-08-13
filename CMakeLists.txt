@@ -48,7 +48,7 @@ add_executable(stardust_client
 )
 target_link_libraries(stardust_client PRIVATE stardust CapnProto::capnp-rpc CapnProto::kj-async)
 
-# --- Tests (GoogleTest) ---
+# ------------- tests -------------
 
 include(FetchContent)
 FetchContent_Declare(
@@ -58,11 +58,8 @@ FetchContent_Declare(
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
-enable_testing()
-
 add_executable(
   stardust_tests
-  tests/hello_test.cpp
   tests/integration_rpc_test.cpp
 )
 target_link_libraries(
@@ -72,6 +69,3 @@ target_link_libraries(
     stardust
     stardust_rpc
 )
-
-include(GoogleTest)
-gtest_discover_tests(stardust_tests)

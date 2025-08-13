@@ -14,13 +14,14 @@ static std::vector<float> demoVec(int dim)
   return v;
 }
 
-static std::string vecToString(const std::vector<float>& v)
+static std::string vecToString(const std::vector<float> &v)
 {
   std::ostringstream oss;
   oss << "[";
   for (size_t i = 0; i < v.size(); ++i)
   {
-    if (i) oss << ", ";
+    if (i)
+      oss << ", ";
     oss << v[i];
   }
   oss << "]";

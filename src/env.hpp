@@ -89,7 +89,7 @@ namespace stardust
     DbHandle vecTagIds_{};
     DbHandle vecTagsByName_{};
     DbHandle vecTagMeta_{};
-    
+
     DbHandle meta_{};
     DbHandle labelIndex_{};
   };
