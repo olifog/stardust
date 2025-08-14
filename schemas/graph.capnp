@@ -2,13 +2,6 @@
 using Cxx = import "/capnp/c++.capnp";
 $Cxx.namespace("stardust::rpc");
 
-# ----------- Common dictionaries (stored separately) -----------
-#   - labelId -> string
-#   - relTypeId -> string
-#   - propKeyId -> string
-#   - vecTagId -> string
-# ---------------------------------------------------------------
-
 struct Value {
   union {
     i64    @0 :Int64;
@@ -31,7 +24,7 @@ struct LabelSet {
 }
 
 # multiple vectors per node, each tagged. vector bytes stay separate from
-# node record for cache locality (store here only in RPC; on disk keep in vec bucket).
+# node record for cache locality (store here only in RPC, on disk keep in vec bucket).
 struct VectorF32 {
   dim  @0 :UInt16;
   data @1 :Data;  # float32 bytes, len = dim*4
@@ -68,7 +61,7 @@ struct EdgeRef {
 # -------------------- RPC Request/Response ----------------------
 
 struct CreateNodeParams {
-  labels     @0 :LabelSet;            # optional; empty -> no labels
+  labels     @0 :LabelSet;            # optional, empty -> no labels
   hotProps   @1 :List(Property);      # optional small set
   coldProps  @2 :List(Property);      # stored out-of-line
   vectors    @3 :List(TaggedVector);  # stored out-of-line + HNSW enqueue

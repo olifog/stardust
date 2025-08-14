@@ -61,7 +61,7 @@ int main(int argc, char **argv)
     std::cout << "node B\n";
     std::cout << "\tid=" << idB << "\n";
 
-    // Add edge A->B
+    // add edge A->B
     auto add = cap.addEdgeRequest();
     auto ap = add.initParams();
     ap.setSrc(idA);
