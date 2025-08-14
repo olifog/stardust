@@ -5,7 +5,22 @@ hybrid graph/vector database!!!! WIP
 
 built on top of LMDB, with capnproto for schema/RPC
 
-## Build and test
+## build
+
+### requirements
+
+- CMake >= 3.30
+- a C++20 compiler
+- Cap'n Proto (capnp, libcapnp-dev)
+- LMDB (liblmdb-dev)
+
+install on macos:
+
+```bash
+brew install cmake pkg-config capnp lmdb
+```
+
+### build/test commands
 
 ```bash
 make build           # configure + build (default Release)
@@ -14,20 +29,20 @@ make debug           # build Debug
 make release         # build Release
 ```
 
-## Running
+## running
 
 ```bash
 make run ARGS="-v"
 ```
 
-Args:
+args:
 
 - `-v`: verbose logging
 - `-b`: bind address (default: `unix:/tmp/stardust.sock`)
 - `-d`: data directory (default: `data`)
 
-To interact with the server, you (currently) need to create a capnproto client.
-See `src/client_example.cpp` for an example, the schema is in `schemas/graph.capnp`.
+to interact with the server, you (currently) need to create a capnproto client.
+see `src/client_example.cpp` for an example, the schema is in `schemas/graph.capnp`.
 
 ## TODO
 
