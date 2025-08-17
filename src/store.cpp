@@ -942,67 +942,95 @@ namespace stardust
 
   uint32_t Store::getOrCreateLabelId(const GetOrCreateLabelIdParams &params)
   {
-    Txn tx(env_.raw(), true);
-    if (auto found = lookup_id_by_name(tx, env_.labelsByName(), params.name))
-      return *found;
     if (!params.createIfMissing)
+    {
+      Txn tx(env_.raw(), false);
+      if (auto found = lookup_id_by_name(tx, env_.labelsByName(), params.name))
+        return *found;
       throw MdbError("label not found");
-    uint32_t id = static_cast<uint32_t>(incr_meta_seq(tx, env_, key_meta_label_seq(), 0));
-    write_name_id_pair(tx, env_.labelIds(), env_.labelsByName(), id, params.name);
-    tx.commit();
-    return id;
+    }
+    {
+      Txn tx(env_.raw(), true);
+      if (auto found = lookup_id_by_name(tx, env_.labelsByName(), params.name))
+        return *found;
+      uint32_t id = static_cast<uint32_t>(incr_meta_seq(tx, env_, key_meta_label_seq(), 0));
+      write_name_id_pair(tx, env_.labelIds(), env_.labelsByName(), id, params.name);
+      tx.commit();
+      return id;
+    }
   }
 
   uint32_t Store::getOrCreateRelTypeId(const GetOrCreateRelTypeIdParams &params)
   {
-    Txn tx(env_.raw(), true);
-    if (auto found = lookup_id_by_name(tx, env_.relTypesByName(), params.name))
-      return *found;
     if (!params.createIfMissing)
+    {
+      Txn tx(env_.raw(), false);
+      if (auto found = lookup_id_by_name(tx, env_.relTypesByName(), params.name))
+        return *found;
       throw MdbError("rel type not found");
-    uint32_t id = static_cast<uint32_t>(incr_meta_seq(tx, env_, key_meta_reltype_seq(), 0));
-    write_name_id_pair(tx, env_.relTypeIds(), env_.relTypesByName(), id, params.name);
-    tx.commit();
-    return id;
+    }
+    {
+      Txn tx(env_.raw(), true);
+      if (auto found = lookup_id_by_name(tx, env_.relTypesByName(), params.name))
+        return *found;
+      uint32_t id = static_cast<uint32_t>(incr_meta_seq(tx, env_, key_meta_reltype_seq(), 0));
+      write_name_id_pair(tx, env_.relTypeIds(), env_.relTypesByName(), id, params.name);
+      tx.commit();
+      return id;
+    }
   }
 
   uint32_t Store::getOrCreatePropKeyId(const GetOrCreatePropKeyIdParams &params)
   {
-    Txn tx(env_.raw(), true);
-    if (auto found = lookup_id_by_name(tx, env_.propKeysByName(), params.name))
-      return *found;
     if (!params.createIfMissing)
+    {
+      Txn tx(env_.raw(), false);
+      if (auto found = lookup_id_by_name(tx, env_.propKeysByName(), params.name))
+        return *found;
       throw MdbError("prop key not found");
-    uint32_t id = static_cast<uint32_t>(incr_meta_seq(tx, env_, key_meta_propkey_seq(), 0));
-    write_name_id_pair(tx, env_.propKeyIds(), env_.propKeysByName(), id, params.name);
-    tx.commit();
-    return id;
+    }
+    {
+      Txn tx(env_.raw(), true);
+      if (auto found = lookup_id_by_name(tx, env_.propKeysByName(), params.name))
+        return *found;
+      uint32_t id = static_cast<uint32_t>(incr_meta_seq(tx, env_, key_meta_propkey_seq(), 0));
+      write_name_id_pair(tx, env_.propKeyIds(), env_.propKeysByName(), id, params.name);
+      tx.commit();
+      return id;
+    }
   }
 
   uint32_t Store::getOrCreateVecTagId(const GetOrCreateVecTagIdParams &params)
   {
-    Txn tx(env_.raw(), true);
-    if (auto found = lookup_id_by_name(tx, env_.vecTagsByName(), params.name))
-      return *found;
     if (!params.createIfMissing)
-      throw MdbError("vec tag not found");
-    uint32_t id = static_cast<uint32_t>(incr_meta_seq(tx, env_, key_meta_vectag_seq(), 0));
-    write_name_id_pair(tx, env_.vecTagIds(), env_.vecTagsByName(), id, params.name);
-
-    if (params.dim.has_value())
     {
-      auto mk = key_vec_tag_meta_be(id);
-      std::string dimv;
-      dimv.reserve(4);
-      put_be32(dimv, static_cast<uint32_t>(*params.dim));
-      MDB_val mvk{mk.size(), const_cast<char *>(mk.data())};
-      MDB_val mvv{dimv.size(), const_cast<char *>(dimv.data())};
-      int prc = mdb_put(tx.get(), env_.vecTagMeta(), &mvk, &mvv, 0);
-      if (prc)
-        throw MdbError(mdb_strerror(prc));
+      Txn tx(env_.raw(), false);
+      if (auto found = lookup_id_by_name(tx, env_.vecTagsByName(), params.name))
+        return *found;
+      throw MdbError("vec tag not found");
     }
-    tx.commit();
-    return id;
+    {
+      Txn tx(env_.raw(), true);
+      if (auto found = lookup_id_by_name(tx, env_.vecTagsByName(), params.name))
+        return *found;
+      uint32_t id = static_cast<uint32_t>(incr_meta_seq(tx, env_, key_meta_vectag_seq(), 0));
+      write_name_id_pair(tx, env_.vecTagIds(), env_.vecTagsByName(), id, params.name);
+
+      if (params.dim.has_value())
+      {
+        auto mk = key_vec_tag_meta_be(id);
+        std::string dimv;
+        dimv.reserve(4);
+        put_be32(dimv, static_cast<uint32_t>(*params.dim));
+        MDB_val mvk{mk.size(), const_cast<char *>(mk.data())};
+        MDB_val mvv{dimv.size(), const_cast<char *>(dimv.data())};
+        int prc = mdb_put(tx.get(), env_.vecTagMeta(), &mvk, &mvv, 0);
+        if (prc)
+          throw MdbError(mdb_strerror(prc));
+      }
+      tx.commit();
+      return id;
+    }
   }
 
   std::string Store::getLabelName(uint32_t id)
