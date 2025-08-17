@@ -7,43 +7,17 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build:
+  ci:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - name: Set up CMake 3.30
-        uses: jwlawson/actions-setup-cmake@v1
-        with:
-          cmake-version: '3.30.x'
-      - name: Install deps
+      - name: Build dev image
+        run: docker build -t stardust-dev .
+      - name: Build release
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential pkg-config capnproto libcapnp-dev liblmdb-dev libatomic1
-      - name: Build (Release)
-        run: make build
-      - name: Upload build dir
-        uses: actions/upload-artifact@v4
-        with:
-          name: cmake-build
-          path: build/
-
-  test:
-    needs: build
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install runtime deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            capnproto libcapnp-dev liblmdb-dev libatomic1
-      - name: Download build
-        uses: actions/download-artifact@v4
-        with:
-          name: cmake-build
-          path: build/
-      - name: Make test binary executable
-        run: chmod +x ./build/stardust_tests
+          docker run --rm -v "$PWD:/workspace" -w /workspace stardust-dev \
+            bash -lc 'make release'
       - name: Run tests
-        run: ./build/stardust_tests
+        run: |
+          docker run --rm -v "$PWD:/workspace" -w /workspace stardust-dev \
+            bash -lc 'chmod +x ./build/release/stardust_tests || true; ./build/release/stardust_tests'

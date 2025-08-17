@@ -20,19 +20,20 @@ install on macos:
 brew install cmake pkg-config capnp lmdb
 ```
 
-### build/test commands
+### dev with docker compose
+
+Run the server:
 
 ```bash
-make build           # configure + build (default Release)
-make test            # run tests
-make debug           # build Debug
-make release         # build Release
+docker compose up dev
 ```
 
-## running
+- to pass server args: `STARDUST_ARGS="-v -b unix:/tmp/stardust.sock" docker compose up dev`.
+
+Run tests:
 
 ```bash
-make run ARGS="-v"
+docker compose run --rm test
 ```
 
 args:

@@ -10,6 +10,19 @@ services:
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     tty: true
     stdin_open: true
-    command: ["bash", "-lc", "tail -f /dev/null"]
+    command: ['bash', '-lc', 'make run PRESET=dev-docker ARGS="${STARDUST_ARGS:--v}"']
+
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    tty: true
+    stdin_open: true
+    command: ['bash', '-lc', 'make test PRESET=dev-docker']
 
 
