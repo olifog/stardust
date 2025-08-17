@@ -1,0 +1,15 @@
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    tty: true
+    stdin_open: true
+    command: ["bash", "-lc", "tail -f /dev/null"]
+
+

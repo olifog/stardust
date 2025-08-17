@@ -299,12 +299,12 @@ TEST_F(IntegrationRpc, Step07_GetNodeAHeaderAndProps)
 
     {
       auto lnames = hdr.getLabels().getNames();
+
       bool hasA = false, hasC = false;
-      for (auto v : lnames)
-      {
-        if (v == "nodelabel-a")
+      for (auto v : lnames) {
+        if (strcmp(v.cStr(), "nodelabel-a") == 0)
           hasA = true;
-        if (v == "nodelabel-c")
+        if (strcmp(v.cStr(), "nodelabel-c") == 0)
           hasC = true;
       }
 
@@ -315,11 +315,10 @@ TEST_F(IntegrationRpc, Step07_GetNodeAHeaderAndProps)
     {
       auto hp = hdr.getHotProps();
       bool hasA = false, hasB = false;
-      for (auto p : hp)
-      {
-        if (p.getKey() == "hotprop-a")
+      for (auto p : hp) {
+        if (strcmp(p.getKey().cStr(), "hotprop-a") == 0)
           hasA = true;
-        if (p.getKey() == "hotprop-b")
+        if (strcmp(p.getKey().cStr(), "hotprop-b") == 0)
           hasB = true;
       }
 
@@ -377,9 +376,9 @@ TEST_F(IntegrationRpc, Step07_GetNodeAHeaderAndProps)
     bool hasA = false, hasC = false;
     for (auto p : some)
     {
-      if (p.getKey() == "hotprop-a")
+      if (strcmp(p.getKey().cStr(), "hotprop-a") == 0)
         hasA = true;
-      if (p.getKey() == "coldprop-c")
+      if (strcmp(p.getKey().cStr(), "coldprop-c") == 0)
         hasC = true;
     }
     EXPECT_TRUE(hasA);
@@ -411,11 +410,12 @@ TEST_F(IntegrationRpc, Step08_SetLabelsOnBAndVerify)
   {
     auto lnames = hdr.getLabels().getNames();
     bool hasA = false, hasB = false;
-    for (auto v : lnames)
+    for (uint32_t i = 0; i < lnames.size(); ++i)
     {
-      if (v == "nodelabel-a")
+      auto v = lnames[i];
+      if (strcmp(v.cStr(), "nodelabel-a") == 0)
         hasA = true;
-      if (v == "nodelabel-b")
+      if (strcmp(v.cStr(), "nodelabel-b") == 0)
         hasB = true;
     }
     EXPECT_TRUE(hasA);
@@ -441,6 +441,7 @@ TEST_F(IntegrationRpc, Step09_VectorsOnB_AddGetDelete)
 
   up.send().wait(ws);
 
+
   {
     auto gv = cap.getVectorsRequest();
     auto gp = gv.initParams();
@@ -450,7 +451,7 @@ TEST_F(IntegrationRpc, Step09_VectorsOnB_AddGetDelete)
     auto res = resp.getResult().getVectors();
 
     ASSERT_EQ(res.size(), 1u);
-    EXPECT_EQ(res[0].getTag(), "vec-b");
+    EXPECT_EQ(strcmp(res[0].getTag().cStr(), "vec-b"), 0);
     EXPECT_EQ(res[0].getVector().getData().size(), v.size() * 4);
 
     auto data = res[0].getVector().getData();
@@ -469,7 +470,7 @@ TEST_F(IntegrationRpc, Step09_VectorsOnB_AddGetDelete)
     auto res = resp.getResult().getVectors();
 
     ASSERT_EQ(res.size(), 1u);
-    EXPECT_EQ(res[0].getTag(), "vec-b");
+    EXPECT_EQ(strcmp(res[0].getTag().cStr(), "vec-b"), 0);
   }
 
   {
@@ -668,7 +669,7 @@ TEST_F(IntegrationRpc, Step12_BatchWrite)
     auto ps = r.getResult().getProps();
 
     EXPECT_EQ(ps.size(), 1u);
-    EXPECT_EQ(ps[0].getKey(), "a");
+    EXPECT_EQ(strcmp(ps[0].getKey().cStr(), "a"), 0);
   }
   {
     auto gn = cap.getNodeRequest();
@@ -677,9 +678,12 @@ TEST_F(IntegrationRpc, Step12_BatchWrite)
     auto lnames = r.getResult().getHeader().getLabels().getNames();
 
     bool has22 = false;
-    for (auto v : lnames)
-      if (v == "nodelabel-d")
+    for (uint32_t i = 0; i < lnames.size(); ++i)
+    {
+      auto v = lnames[i];
+      if (strcmp(v.cStr(), "nodelabel-d") == 0)
         has22 = true;
+    }
     EXPECT_TRUE(has22);
   }
 }
