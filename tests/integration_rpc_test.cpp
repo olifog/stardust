@@ -125,20 +125,20 @@ TEST_F(IntegrationRpc, Step01_CreateNodeA)
   auto req = cap.createNodeRequest();
   auto p = req.initParams();
   auto labels = p.initLabels();
-  auto lid = labels.initLabelIds(2);
-  lid.set(0, 1u);
-  lid.set(1, 3u);
+  auto lnames = labels.initNames(2);
+  lnames.set(0, "nodelabel-a");
+  lnames.set(1, "nodelabel-c");
 
   auto hot = p.initHotProps(2);
   {
     auto pr = hot[0];
-    pr.setKeyId(10u);
+    pr.setKey("hotprop-a");
     auto v = pr.initVal();
     v.setI64(42);
   }
   {
     auto pr = hot[1];
-    pr.setKeyId(11u);
+    pr.setKey("hotprop-b");
     auto v = pr.initVal();
     v.setBoolv(true);
   }
@@ -146,7 +146,7 @@ TEST_F(IntegrationRpc, Step01_CreateNodeA)
   auto cold = p.initColdProps(1);
   {
     auto pr = cold[0];
-    pr.setKeyId(12u);
+    pr.setKey("coldprop-c");
     auto v = pr.initVal();
     const char bytes[] = "hello";
     v.setBytes(capnp::Data::Reader(reinterpret_cast<const capnp::byte *>(bytes), sizeof(bytes) - 1));
@@ -155,7 +155,7 @@ TEST_F(IntegrationRpc, Step01_CreateNodeA)
   auto v = makeDemoVec(8);
   auto vecs = p.initVectors(1);
   auto tagged = vecs[0];
-  tagged.setTagId(0);
+  tagged.setTag("vec-a");
   auto vec = tagged.initVector();
   vec.setDim(8);
   capnp::Data::Builder data = vec.initData(v.size() * 4);
@@ -189,7 +189,7 @@ TEST_F(IntegrationRpc, Step03_AddEdge_A_to_B_Type4)
   ap.setDst(idB);
 
   auto meta = ap.initMeta();
-  meta.setTypeId(4u);
+  meta.setType("edgetype-a");
 
   auto resp = add.send().wait(ws);
   auto e = resp.getEdge();
@@ -253,23 +253,30 @@ TEST_F(IntegrationRpc, Step06_UpsertNodeAProps)
   auto p = req.initParams();
   p.setId(idA);
 
-  auto setHot = p.initSetHot(1);
+  auto setHot = p.initSetHot(2);
   {
     auto pr = setHot[0];
-    pr.setKeyId(13u);
+    pr.setKey("hotprop-a");
     auto v = pr.initVal();
     v.setF64(3.14);
   }
+  {
+    auto pr = setHot[1];
+    pr.setKey("hotprop-c");
+    auto v = pr.initVal();
+    v.setBoolv(false);
+  }
+
   auto setCold = p.initSetCold(1);
   {
     auto pr = setCold[0];
-    pr.setKeyId(14u);
+    pr.setKey("coldprop-c");
     auto v = pr.initVal();
     v.setTextId(123u);
   }
 
   auto unset = p.initUnsetKeys(1);
-  unset.set(0, 11u);
+  unset.set(0, "hotprop-b");
 
   req.send().wait(ws);
 }
@@ -287,25 +294,37 @@ TEST_F(IntegrationRpc, Step07_GetNodeAHeaderAndProps)
     auto hdr = resp.getResult().getHeader();
 
     EXPECT_EQ(hdr.getId(), idA);
-    EXPECT_EQ(hdr.getLabels().getLabelIds().size(), 2u);
+    EXPECT_EQ(hdr.getLabels().getNames().size(), 2u);
     EXPECT_EQ(hdr.getHotProps().size(), 2u);
 
     {
-      auto lids = hdr.getLabels().getLabelIds();
-      bool has1 = false, has3 = false;
-      for (auto v : lids) { if (v == 1u) has1 = true; if (v == 3u) has3 = true; }
+      auto lnames = hdr.getLabels().getNames();
+      bool hasA = false, hasC = false;
+      for (auto v : lnames)
+      {
+        if (v == "nodelabel-a")
+          hasA = true;
+        if (v == "nodelabel-c")
+          hasC = true;
+      }
 
-      EXPECT_TRUE(has1);
-      EXPECT_TRUE(has3);
+      EXPECT_TRUE(hasA);
+      EXPECT_TRUE(hasC);
     }
 
     {
       auto hp = hdr.getHotProps();
-      bool has10 = false, has13 = false;
-      for (auto p : hp) { if (p.getKeyId() == 10u) has10 = true; if (p.getKeyId() == 13u) has13 = true; }
+      bool hasA = false, hasB = false;
+      for (auto p : hp)
+      {
+        if (p.getKey() == "hotprop-a")
+          hasA = true;
+        if (p.getKey() == "hotprop-b")
+          hasB = true;
+      }
 
-      EXPECT_TRUE(has10);
-      EXPECT_TRUE(has13);
+      EXPECT_TRUE(hasA);
+      EXPECT_FALSE(hasB);
     }
   }
 
@@ -319,22 +338,26 @@ TEST_F(IntegrationRpc, Step07_GetNodeAHeaderAndProps)
 
     ASSERT_GE(all.size(), 3u);
 
-    bool has10 = false, has12 = false, has13 = false, has14 = false, has11 = false;
-    for (auto p : all) {
-      switch (p.getKeyId()) {
-        case 10u: has10 = true; break;
-        case 11u: has11 = true; break;
-        case 12u: has12 = true; break;
-        case 13u: has13 = true; break;
-        case 14u: has14 = true; break;
-        default: break;
-      }
+    bool hasA = false, hasB = false, hasC = false, hasColdC = false, hasRandom = false;
+    for (auto p : all)
+    {
+      const auto key = p.getKey().cStr();
+      if (strcmp(key, "hotprop-a") == 0)
+        hasA = true;
+      else if (strcmp(key, "hotprop-b") == 0)
+        hasB = true;
+      else if (strcmp(key, "coldprop-c") == 0)
+        hasC = true;
+      else if (strcmp(key, "hotprop-c") == 0)
+        hasColdC = true;
+      else if (strcmp(key, "hotprop-random-other-key") == 0)
+        hasRandom = true;
     }
-    EXPECT_TRUE(has10);
-    EXPECT_TRUE(has12);
-    EXPECT_TRUE(has13);
-    EXPECT_TRUE(has14);
-    EXPECT_FALSE(has11);
+    EXPECT_TRUE(hasA);
+    EXPECT_TRUE(hasC);
+    EXPECT_TRUE(hasColdC);
+    EXPECT_FALSE(hasB);
+    EXPECT_FALSE(hasRandom);
   }
 
   {
@@ -342,19 +365,25 @@ TEST_F(IntegrationRpc, Step07_GetNodeAHeaderAndProps)
     auto pp = gp.initParams();
 
     pp.setId(idA);
-    auto ks = pp.initKeyIds(2);
-    ks.set(0, 10u);
-    ks.set(1, 14u);
+    auto ks = pp.initKeys(2);
+    ks.set(0, "hotprop-a");
+    ks.set(1, "coldprop-c");
 
     auto resp = gp.send().wait(ws);
     auto some = resp.getResult().getProps();
 
     EXPECT_EQ(some.size(), 2u);
 
-    bool has10 = false, has14 = false;
-    for (auto p : some) { if (p.getKeyId() == 10u) has10 = true; if (p.getKeyId() == 14u) has14 = true; }
-    EXPECT_TRUE(has10);
-    EXPECT_TRUE(has14);
+    bool hasA = false, hasC = false;
+    for (auto p : some)
+    {
+      if (p.getKey() == "hotprop-a")
+        hasA = true;
+      if (p.getKey() == "coldprop-c")
+        hasC = true;
+    }
+    EXPECT_TRUE(hasA);
+    EXPECT_TRUE(hasC);
   }
 }
 
@@ -367,8 +396,8 @@ TEST_F(IntegrationRpc, Step08_SetLabelsOnBAndVerify)
   auto sp = sl.initParams();
   sp.setId(idB);
   auto add = sp.initAddLabels(2);
-  add.set(0, 7u);
-  add.set(1, 9u);
+  add.set(0, "nodelabel-a");
+  add.set(1, "nodelabel-b");
 
   sl.send().wait(ws);
   auto gn = cap.getNodeRequest();
@@ -377,14 +406,20 @@ TEST_F(IntegrationRpc, Step08_SetLabelsOnBAndVerify)
   auto resp = gn.send().wait(ws);
   auto hdr = resp.getResult().getHeader();
 
-  EXPECT_EQ(hdr.getLabels().getLabelIds().size(), 2u);
+  EXPECT_EQ(hdr.getLabels().getNames().size(), 2u);
 
   {
-    auto lids = hdr.getLabels().getLabelIds();
-    bool has7 = false, has9 = false;
-    for (auto v : lids) { if (v == 7u) has7 = true; if (v == 9u) has9 = true; }
-    EXPECT_TRUE(has7);
-    EXPECT_TRUE(has9);
+    auto lnames = hdr.getLabels().getNames();
+    bool hasA = false, hasB = false;
+    for (auto v : lnames)
+    {
+      if (v == "nodelabel-a")
+        hasA = true;
+      if (v == "nodelabel-b")
+        hasB = true;
+    }
+    EXPECT_TRUE(hasA);
+    EXPECT_TRUE(hasB);
   }
 }
 
@@ -396,7 +431,7 @@ TEST_F(IntegrationRpc, Step09_VectorsOnB_AddGetDelete)
   auto up = cap.upsertVectorRequest();
   auto p = up.initParams();
   p.setId(idB);
-  p.setTagId(1u);
+  p.setTag("vec-b");
 
   auto v = makeDemoVec(4);
   auto vec = p.initVector();
@@ -415,7 +450,7 @@ TEST_F(IntegrationRpc, Step09_VectorsOnB_AddGetDelete)
     auto res = resp.getResult().getVectors();
 
     ASSERT_EQ(res.size(), 1u);
-    EXPECT_EQ(res[0].getTagId(), 1u);
+    EXPECT_EQ(res[0].getTag(), "vec-b");
     EXPECT_EQ(res[0].getVector().getData().size(), v.size() * 4);
 
     auto data = res[0].getVector().getData();
@@ -427,21 +462,21 @@ TEST_F(IntegrationRpc, Step09_VectorsOnB_AddGetDelete)
     auto gv = cap.getVectorsRequest();
     auto gp = gv.initParams();
     gp.setId(idB);
-    auto tags = gp.initTagIds(1);
-    tags.set(0, 1u);
+    auto tags = gp.initTags(1);
+    tags.set(0, "vec-b");
 
     auto resp = gv.send().wait(ws);
     auto res = resp.getResult().getVectors();
 
     ASSERT_EQ(res.size(), 1u);
-    EXPECT_EQ(res[0].getTagId(), 1u);
+    EXPECT_EQ(res[0].getTag(), "vec-b");
   }
 
   {
     auto del = cap.deleteVectorRequest();
     auto dp = del.initParams();
     dp.setId(idB);
-    dp.setTagId(1u);
+    dp.setTag("vec-b");
 
     del.send().wait(ws);
     auto gv = cap.getVectorsRequest();
@@ -454,7 +489,7 @@ TEST_F(IntegrationRpc, Step09_VectorsOnB_AddGetDelete)
   }
 }
 
-TEST_F(IntegrationRpc, Step10_AddSecondEdgeAtoB_Type7_AndFilters)
+TEST_F(IntegrationRpc, Step10_AddSecondEdgeAtoB_AndFilters)
 {
   auto &ws = client->getWaitScope();
   auto cap = client->getMain<stardust::rpc::GraphDb>();
@@ -464,7 +499,7 @@ TEST_F(IntegrationRpc, Step10_AddSecondEdgeAtoB_Type7_AndFilters)
     auto ap = add.initParams();
     ap.setSrc(idA);
     ap.setDst(idB);
-    ap.initMeta().setTypeId(7u);
+    ap.initMeta().setType("edgetype-b");
 
     auto resp = add.send().wait(ws);
     edge2 = resp.getEdge().getId();
@@ -492,7 +527,7 @@ TEST_F(IntegrationRpc, Step10_AddSecondEdgeAtoB_Type7_AndFilters)
     np.setLimit(16);
 
     auto rel = np.initRelTypeIn(1);
-    rel.set(0, 7u);
+    rel.set(0, "edgetype-b");
 
     auto resp = req.send().wait(ws);
     auto list = resp.getResult().getNeighbors();
@@ -501,6 +536,7 @@ TEST_F(IntegrationRpc, Step10_AddSecondEdgeAtoB_Type7_AndFilters)
     for (auto x : list)
       if (x == idB)
         found = true;
+    EXPECT_EQ(list.size(), 1u);
     EXPECT_TRUE(found);
   }
 
@@ -511,12 +547,15 @@ TEST_F(IntegrationRpc, Step10_AddSecondEdgeAtoB_Type7_AndFilters)
     np.setDirection(stardust::rpc::Direction::OUT);
     np.setLimit(16);
     auto rel = np.initRelTypeIn(1);
-    rel.set(0, 4u);
+    rel.set(0, "edgetype-a");
     auto resp = req.send().wait(ws);
     auto list = resp.getResult().getNeighbors();
 
     bool found = false;
-    for (auto x : list) if (x == idB) found = true;
+    for (auto x : list)
+      if (x == idB)
+        found = true;
+    EXPECT_EQ(list.size(), 1u);
     EXPECT_TRUE(found);
   }
 
@@ -528,8 +567,8 @@ TEST_F(IntegrationRpc, Step10_AddSecondEdgeAtoB_Type7_AndFilters)
     np.setDirection(stardust::rpc::Direction::OUT);
     np.setLimit(16);
     auto has = np.initNeighborHas();
-    auto ids = has.initLabelIds(1);
-    ids.set(0, 9u);
+    auto names = has.initNames(1);
+    names.set(0, "nodelabel-b");
 
     auto resp = req.send().wait(ws);
     auto list = resp.getResult().getNeighbors();
@@ -539,26 +578,6 @@ TEST_F(IntegrationRpc, Step10_AddSecondEdgeAtoB_Type7_AndFilters)
       if (x == idB)
         found = true;
     EXPECT_TRUE(found);
-  }
-  {
-    auto req = cap.neighborsRequest();
-    auto np = req.initParams();
-
-    np.setNode(idA);
-    np.setDirection(stardust::rpc::Direction::OUT);
-    np.setLimit(16);
-    auto has = np.initNeighborHas();
-    auto ids = has.initLabelIds(1);
-    ids.set(0, 99u);
-
-    auto resp = req.send().wait(ws);
-    auto list = resp.getResult().getNeighbors();
-
-    bool found = false;
-    for (auto x : list)
-      if (x == idB)
-        found = true;
-    EXPECT_FALSE(found);
   }
 }
 
@@ -571,10 +590,10 @@ TEST_F(IntegrationRpc, Step11_UpdateEdgeProps_OnEdge1)
   auto up = upd.initParams();
   up.setEdgeId(edge1);
   auto set = up.initSetProps(1);
-  set[0].setKeyId(55u);
+  set[0].setKey("hotprop-a");
   set[0].initVal().setI64(7);
   auto unset = up.initUnsetKeys(1);
-  unset.set(0, 56u);
+  unset.set(0, "hotprop-b");
 
   upd.send().wait(ws);
 
@@ -602,13 +621,13 @@ TEST_F(IntegrationRpc, Step12_BatchWrite)
   {
     auto op = ops[0].initCreateNode();
     auto ls = op.initLabels();
-    auto ids = ls.initLabelIds(1);
-    ids.set(0, 21u);
+    auto names = ls.initNames(1);
+    names.set(0, "nodelabel-d");
 
     auto v = makeDemoVec(2);
     auto vecs = op.initVectors(1);
     auto tv = vecs[0];
-    tv.setTagId(2u);
+    tv.setTag("vec-d");
     auto vv = tv.initVector();
     vv.setDim(2);
     capnp::Data::Builder data = vv.initData(v.size() * 4);
@@ -619,7 +638,7 @@ TEST_F(IntegrationRpc, Step12_BatchWrite)
     auto op = ops[1].initUpsertNodeProps();
     op.setId(idA);
     auto set = op.initSetHot(1);
-    set[0].setKeyId(99u);
+    set[0].setKey("a");
     set[0].initVal().setBoolv(false);
   }
 
@@ -627,14 +646,14 @@ TEST_F(IntegrationRpc, Step12_BatchWrite)
     auto op = ops[2].initSetNodeLabels();
     op.setId(idB);
     auto add = op.initAddLabels(1);
-    add.set(0, 22u);
+    add.set(0, "nodelabel-d");
   }
 
   {
     auto op = ops[3].initAddEdge();
     op.setSrc(idB);
     op.setDst(0);
-    op.initMeta().setTypeId(8u);
+    op.initMeta().setType("edgetype-d");
   }
 
   wr.send().wait(ws);
@@ -643,22 +662,24 @@ TEST_F(IntegrationRpc, Step12_BatchWrite)
     auto gp = cap.getNodePropsRequest();
     auto pp = gp.initParams();
     pp.setId(idA);
-    auto keys = pp.initKeyIds(1);
-    keys.set(0, 99u);
+    auto keys = pp.initKeys(1);
+    keys.set(0, "a");
     auto r = gp.send().wait(ws);
     auto ps = r.getResult().getProps();
 
     EXPECT_EQ(ps.size(), 1u);
-    EXPECT_EQ(ps[0].getKeyId(), 99u);
+    EXPECT_EQ(ps[0].getKey(), "a");
   }
   {
     auto gn = cap.getNodeRequest();
     gn.initParams().setId(idB);
     auto r = gn.send().wait(ws);
-    auto lids = r.getResult().getHeader().getLabels().getLabelIds();
+    auto lnames = r.getResult().getHeader().getLabels().getNames();
 
     bool has22 = false;
-    for (auto v : lids) if (v == 22u) has22 = true;
+    for (auto v : lnames)
+      if (v == "nodelabel-d")
+        has22 = true;
     EXPECT_TRUE(has22);
   }
 }
@@ -671,8 +692,8 @@ TEST_F(IntegrationRpc, Step13_CreateC_AndConnect_B_to_C)
   auto req = cap.createNodeRequest();
   auto p = req.initParams();
   auto ls = p.initLabels();
-  auto ids = ls.initLabelIds(1);
-  ids.set(0, 21u);
+  auto names = ls.initNames(1);
+  names.set(0, "nodelabel-d");
 
   auto resp = req.send().wait(ws);
   auto node = resp.getResult().getNode();
@@ -684,7 +705,7 @@ TEST_F(IntegrationRpc, Step13_CreateC_AndConnect_B_to_C)
   auto ap = add.initParams();
   ap.setSrc(idB);
   ap.setDst(idC);
-  ap.initMeta().setTypeId(8u);
+  ap.initMeta().setType("edgetype-c");
   add.send().wait(ws);
 }
 
@@ -715,10 +736,13 @@ TEST_F(IntegrationRpc, Step14_VerifyNeighborsOfBIncludeC)
     np2.setDirection(stardust::rpc::Direction::OUT);
     np2.setLimit(16);
     auto rel = np2.initRelTypeIn(1);
-    rel.set(0, 8u);
+    rel.set(0, "edgetype-c");
     auto r = rq.send().wait(ws);
 
-    bool hasC = false; for (auto x : r.getResult().getNeighbors()) if (x == idC) hasC = true;
+    bool hasC = false;
+    for (auto x : r.getResult().getNeighbors())
+      if (x == idC)
+        hasC = true;
     EXPECT_TRUE(hasC);
   }
   {
@@ -728,10 +752,13 @@ TEST_F(IntegrationRpc, Step14_VerifyNeighborsOfBIncludeC)
     np2.setDirection(stardust::rpc::Direction::OUT);
     np2.setLimit(16);
     auto rel = np2.initRelTypeIn(1);
-    rel.set(0, 7u);
+    rel.set(0, "edgetype-b");
     auto r = rq.send().wait(ws);
-    
-    bool hasC = false; for (auto x : r.getResult().getNeighbors()) if (x == idC) hasC = true;
+
+    bool hasC = false;
+    for (auto x : r.getResult().getNeighbors())
+      if (x == idC)
+        hasC = true;
     EXPECT_FALSE(hasC);
   }
 }
@@ -784,23 +811,233 @@ TEST_F(IntegrationRpc, Step16_DeleteNodeB_AndEnsureNoNeighbors)
   EXPECT_EQ(list.size(), 0u);
 }
 
-TEST_F(IntegrationRpc, Step17_Knn_Empty)
+TEST_F(IntegrationRpc, Step18_CreateNodesWithVectorsForKnn)
 {
   auto &ws = client->getWaitScope();
   auto cap = client->getMain<stardust::rpc::GraphDb>();
 
-  auto knn = cap.knnRequest();
-  auto kp = knn.initParams();
-  kp.setTagId(0u);
-  auto q = makeDemoVec(8);
-  auto vec = kp.initQuery();
-  vec.setDim(8);
-  capnp::Data::Builder data = vec.initData(q.size() * 4);
-  std::memcpy(data.begin(), q.data(), q.size() * 4);
-  kp.setK(3);
+  // 5 nodes with vectors of dimension 4 and tag "knn-test"
+  std::vector<uint64_t> nodeIds;
+  
+  // node 1: [1.0, 0.0, 0.0, 0.0] - unit vector in first dimension
+  {
+    auto req = cap.createNodeRequest();
+    auto p = req.initParams();
+    
+    std::vector<float> v = {1.0f, 0.0f, 0.0f, 0.0f};
+    auto vecs = p.initVectors(1);
+    auto tv = vecs[0];
+    tv.setTag("knn-test");
+    auto vec = tv.initVector();
+    vec.setDim(4);
+    capnp::Data::Builder data = vec.initData(v.size() * 4);
+    std::memcpy(data.begin(), v.data(), v.size() * 4);
+    
+    auto resp = req.send().wait(ws);
+    nodeIds.push_back(resp.getResult().getNode().getId());
+  }
+  
+  // node 2: [0.0, 1.0, 0.0, 0.0] - unit vector in second dimension
+  {
+    auto req = cap.createNodeRequest();
+    auto p = req.initParams();
+    
+    std::vector<float> v = {0.0f, 1.0f, 0.0f, 0.0f};
+    auto vecs = p.initVectors(1);
+    auto tv = vecs[0];
+    tv.setTag("knn-test");
+    auto vec = tv.initVector();
+    vec.setDim(4);
+    capnp::Data::Builder data = vec.initData(v.size() * 4);
+    std::memcpy(data.begin(), v.data(), v.size() * 4);
+    
+    auto resp = req.send().wait(ws);
+    nodeIds.push_back(resp.getResult().getNode().getId());
+  }
+  
+  // node 3: [0.7071, 0.7071, 0.0, 0.0] - 45 degrees between first two dimensions
+  {
+    auto req = cap.createNodeRequest();
+    auto p = req.initParams();
+    
+    std::vector<float> v = {0.7071f, 0.7071f, 0.0f, 0.0f};
+    auto vecs = p.initVectors(1);
+    auto tv = vecs[0];
+    tv.setTag("knn-test");
+    auto vec = tv.initVector();
+    vec.setDim(4);
+    capnp::Data::Builder data = vec.initData(v.size() * 4);
+    std::memcpy(data.begin(), v.data(), v.size() * 4);
+    
+    auto resp = req.send().wait(ws);
+    nodeIds.push_back(resp.getResult().getNode().getId());
+  }
+  
+  // node 4: [0.5, 0.5, 0.5, 0.5] - equal in all dimensions
+  {
+    auto req = cap.createNodeRequest();
+    auto p = req.initParams();
+    
+    std::vector<float> v = {0.5f, 0.5f, 0.5f, 0.5f};
+    auto vecs = p.initVectors(1);
+    auto tv = vecs[0];
+    tv.setTag("knn-test");
+    auto vec = tv.initVector();
+    vec.setDim(4);
+    capnp::Data::Builder data = vec.initData(v.size() * 4);
+    std::memcpy(data.begin(), v.data(), v.size() * 4);
+    
+    auto resp = req.send().wait(ws);
+    nodeIds.push_back(resp.getResult().getNode().getId());
+  }
+  
+  // node 5: [-1.0, 0.0, 0.0, 0.0] - opposite of node 1
+  {
+    auto req = cap.createNodeRequest();
+    auto p = req.initParams();
+    
+    std::vector<float> v = {-1.0f, 0.0f, 0.0f, 0.0f};
+    auto vecs = p.initVectors(1);
+    auto tv = vecs[0];
+    tv.setTag("knn-test");
+    auto vec = tv.initVector();
+    vec.setDim(4);
+    capnp::Data::Builder data = vec.initData(v.size() * 4);
+    std::memcpy(data.begin(), v.data(), v.size() * 4);
+    
+    auto resp = req.send().wait(ws);
+    nodeIds.push_back(resp.getResult().getNode().getId());
+  }
+  
+  EXPECT_EQ(nodeIds.size(), 5u);
+  for (auto id : nodeIds) {
+    EXPECT_GT(id, 0u);
+  }
+}
 
-  auto resp = knn.send().wait(ws);
-  auto res = resp.getResult();
-
-  EXPECT_EQ(res.getHits().size(), 0u);
+TEST_F(IntegrationRpc, Step19_KnnQueries)
+{
+  auto &ws = client->getWaitScope();
+  auto cap = client->getMain<stardust::rpc::GraphDb>();
+  
+  // test 1: Query with [1.0, 0.0, 0.0, 0.0], k=3
+  // Should find node 1 as exact match (score ~1.0), then node 3 (has 0.7071 in first dim)
+  {
+    auto knn = cap.knnRequest();
+    auto kp = knn.initParams();
+    kp.setTag("knn-test");
+    
+    std::vector<float> q = {1.0f, 0.0f, 0.0f, 0.0f};
+    auto vec = kp.initQuery();
+    vec.setDim(4);
+    capnp::Data::Builder data = vec.initData(q.size() * 4);
+    std::memcpy(data.begin(), q.data(), q.size() * 4);
+    kp.setK(5);
+    
+    auto resp = knn.send().wait(ws);
+    auto hits = resp.getResult().getHits();
+    
+    ASSERT_EQ(hits.size(), 5u);
+    
+    EXPECT_NEAR(hits[0].getScore(), 1.0f, 0.0001f);
+    
+    for (size_t i = 1; i < hits.size(); ++i) {
+      EXPECT_LE(hits[i].getScore(), hits[i-1].getScore());
+    }
+    
+    // last result should be the opposite vector with score -1.0
+    EXPECT_NEAR(hits[4].getScore(), -1.0f, 0.0001f);
+  }
+  
+  // test 2: Query with [0.0, 1.0, 0.0, 0.0], k=2
+  // Should find node 2 as exact match, then node 3
+  {
+    auto knn = cap.knnRequest();
+    auto kp = knn.initParams();
+    kp.setTag("knn-test");
+    
+    std::vector<float> q = {0.0f, 1.0f, 0.0f, 0.0f};
+    auto vec = kp.initQuery();
+    vec.setDim(4);
+    capnp::Data::Builder data = vec.initData(q.size() * 4);
+    std::memcpy(data.begin(), q.data(), q.size() * 4);
+    kp.setK(2);
+    
+    auto resp = knn.send().wait(ws);
+    auto hits = resp.getResult().getHits();
+    
+    ASSERT_EQ(hits.size(), 2u);
+    
+    EXPECT_NEAR(hits[0].getScore(), 1.0f, 0.0001f);
+    EXPECT_NEAR(hits[1].getScore(), 0.7071f, 0.01f);
+  }
+  
+  // test 3: Query with [0.25, 0.25, 0.25, 0.25]
+  {
+    auto knn = cap.knnRequest();
+    auto kp = knn.initParams();
+    kp.setTag("knn-test");
+    
+    std::vector<float> q = {0.25f, 0.25f, 0.25f, 0.25f};
+    auto vec = kp.initQuery();
+    vec.setDim(4);
+    capnp::Data::Builder data = vec.initData(q.size() * 4);
+    std::memcpy(data.begin(), q.data(), q.size() * 4);
+    kp.setK(5);
+    
+    auto resp = knn.send().wait(ws);
+    auto hits = resp.getResult().getHits();
+    
+    ASSERT_EQ(hits.size(), 5u);
+    
+    EXPECT_NEAR(hits[0].getScore(), 1.0f, 0.0001f);
+    
+    for (size_t i = 1; i < hits.size(); ++i) {
+      EXPECT_LE(hits[i].getScore(), hits[i-1].getScore());
+    }
+  }
+  
+  // test 4: Query with zero vector [0, 0, 0, 0], k=3
+  // with zero query vector, all scores should be 0 (as per the implementation)
+  {
+    auto knn = cap.knnRequest();
+    auto kp = knn.initParams();
+    kp.setTag("knn-test");
+    
+    std::vector<float> q = {0.0f, 0.0f, 0.0f, 0.0f};
+    auto vec = kp.initQuery();
+    vec.setDim(4);
+    capnp::Data::Builder data = vec.initData(q.size() * 4);
+    std::memcpy(data.begin(), q.data(), q.size() * 4);
+    kp.setK(3);
+    
+    auto resp = knn.send().wait(ws);
+    auto hits = resp.getResult().getHits();
+    
+    ASSERT_EQ(hits.size(), 3u);
+    
+    for (const auto& hit : hits) {
+      EXPECT_NEAR(hit.getScore(), 0.0f, 0.0001f);
+    }
+  }
+  
+  // test 5: Query with k=0
+  // should return empty results
+  {
+    auto knn = cap.knnRequest();
+    auto kp = knn.initParams();
+    kp.setTag("knn-test");
+    
+    std::vector<float> q = {1.0f, 0.0f, 0.0f, 0.0f};
+    auto vec = kp.initQuery();
+    vec.setDim(4);
+    capnp::Data::Builder data = vec.initData(q.size() * 4);
+    std::memcpy(data.begin(), q.data(), q.size() * 4);
+    kp.setK(0);
+    
+    auto resp = knn.send().wait(ws);
+    auto hits = resp.getResult().getHits();
+    
+    EXPECT_EQ(hits.size(), 0u);
+  }
 }

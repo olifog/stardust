@@ -42,7 +42,7 @@ int main(int argc, char **argv)
     auto v = demoVec(8);
     auto vecs = params.initVectors(1);
     auto tagged = vecs[0];
-    tagged.setTagId(0);
+    tagged.setTag("vec");
     auto vec = tagged.initVector();
     vec.setDim(8);
     capnp::Data::Builder data = vec.initData(v.size() * 4);
@@ -67,7 +67,7 @@ int main(int argc, char **argv)
     ap.setSrc(idA);
     ap.setDst(idB);
     auto meta = ap.initMeta();
-    meta.setTypeId(0);
+    meta.setType("rel");
     add.send().wait(client.getWaitScope());
   }
 

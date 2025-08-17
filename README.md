@@ -46,8 +46,27 @@ see `src/client_example.cpp` for an example, the schema is in `schemas/graph.cap
 
 ## TODO
 
-- [ ] way more tests, make sure things are working properly
-- [ ] actual knn
+- [X] actual knn
+- [X] where is vecTagMeta written
+- [ ] partition vectors by tagId
+- [X] way more tests, make sure things are working properly
+  - [ ] test with real embedding model
+- [X] implement interning of various strings properly (label names, property key names, types, etc.)
+- [ ] intern text props
 - [ ] expand out the API, more CRUD + query filters etc.
-- [ ] make a wrapper http server
+- [ ] add in http server alternative to capnproto
+- [ ] make example graph rag application
+- [ ] hnsw index for vector search
+- [ ] expose http api as (read only) mcp server
 - [ ] make custom extension to cypher, make a grammar, register queries to precompile them (?)
+
+longer term:
+
+- [ ] own storage engine, optimise locality w/ graph location and vector latent space
+- [ ] simd stuff
+- [ ] think deeper about concurrency model, LMDB single-writer currently but could be multi-writer
+- [ ] isolation guarantees, transactions, crash consistency, etc.
+- [ ] auth
+- [ ] cli installer, docker image, etc.
+- [ ] inbuilt opinionated concept of versioning (?), layer on top of primitives
+- [ ] python/ts sdks

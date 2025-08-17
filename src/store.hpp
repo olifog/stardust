@@ -185,6 +185,28 @@ namespace stardust
     uint64_t edgeId{0};
   };
 
+  struct GetOrCreateLabelIdParams
+  {
+    std::string name{};
+    bool createIfMissing{false};
+  };
+  struct GetOrCreateRelTypeIdParams
+  {
+    std::string name{};
+    bool createIfMissing{false};
+  };
+  struct GetOrCreatePropKeyIdParams
+  {
+    std::string name{};
+    bool createIfMissing{false};
+  };
+  struct GetOrCreateVecTagIdParams
+  {
+    std::string name{};
+    bool createIfMissing{false};
+    std::optional<uint16_t> dim{}; // optional dimension to persist on first creation
+  };
+
   struct DeleteNodeParams
   {
     uint64_t id{0};
@@ -215,6 +237,16 @@ namespace stardust
     GetNodePropsResult getNodeProps(const GetNodePropsParams &params);
     GetVectorsResult getVectors(const GetVectorsParams &params);
     EdgeRef getEdge(const GetEdgeParams &params);
+
+    // string interning helpers
+    uint32_t getOrCreateLabelId(const GetOrCreateLabelIdParams &params);
+    uint32_t getOrCreateRelTypeId(const GetOrCreateRelTypeIdParams &params);
+    uint32_t getOrCreatePropKeyId(const GetOrCreatePropKeyIdParams &params);
+    uint32_t getOrCreateVecTagId(const GetOrCreateVecTagIdParams &params);
+    std::string getLabelName(uint32_t id);
+    std::string getRelTypeName(uint32_t id);
+    std::string getPropKeyName(uint32_t id);
+    std::string getVecTagName(uint32_t id);
 
     // deletes
     void deleteNode(const DeleteNodeParams &params);

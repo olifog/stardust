@@ -5,6 +5,10 @@
 #include <string_view>
 #include <algorithm>
 #include <unordered_set>
+#include <cmath>
+#include <limits>
+#include <queue>
+#include <kj/debug.h>
 
 namespace stardust
 {
@@ -13,6 +17,18 @@ namespace stardust
   static inline MDB_val make_val_from_str(const std::string &s)
   {
     return MDB_val{s.size(), const_cast<char *>(s.data())};
+  }
+
+  static std::string read_string_by_id(Txn &tx, DbHandle idsDbi, uint32_t id)
+  {
+    std::string idk = key_u32_be(id);
+    MDB_val k{idk.size(), const_cast<char *>(idk.data())}, v{};
+    int rc = mdb_get(tx.get(), idsDbi, &k, &v);
+    if (rc == MDB_NOTFOUND)
+      throw MdbError("id not found");
+    if (rc)
+      throw MdbError(mdb_strerror(rc));
+    return std::string(static_cast<const char *>(v.mv_data), v.mv_size);
   }
 
   static bool mdb_get_val(MDB_txn *tx, DbHandle dbi, std::string_view key, MDB_val &out)
@@ -92,6 +108,42 @@ namespace stardust
   static uint64_t next_edge_id(Txn &tx, Env &env)
   {
     return incr_meta_seq(tx, env, key_meta_edge_seq(), 0);
+  }
+
+  // -------------------- name/id dictionary helpers --------------------
+
+  static std::optional<uint32_t> lookup_id_by_name(Txn &tx, DbHandle byNameDbi, std::string_view name)
+  {
+    MDB_val k{name.size(), const_cast<char *>(name.data())}, v{};
+    int rc = mdb_get(tx.get(), byNameDbi, &k, &v);
+    if (rc == MDB_NOTFOUND)
+      return std::nullopt;
+    if (rc)
+      throw MdbError(mdb_strerror(rc));
+    if (v.mv_size != 4)
+      throw MdbError("corrupt dictionary id value");
+    uint32_t id = read_be32(static_cast<const unsigned char *>(v.mv_data));
+    return id;
+  }
+
+  static void write_name_id_pair(Txn &tx, DbHandle idsDbi, DbHandle byNameDbi, uint32_t id, std::string_view name)
+  {
+    std::string idk = key_u32_be(id);
+    MDB_val idKey{idk.size(), const_cast<char *>(idk.data())};
+    MDB_val nameVal{name.size(), const_cast<char *>(name.data())};
+    int rc = mdb_put(tx.get(), idsDbi, &idKey, &nameVal, 0);
+    if (rc)
+      throw MdbError(mdb_strerror(rc));
+
+    // name -> id (big-endian 4 bytes)
+    std::string idbe;
+    idbe.reserve(4);
+    put_be32(idbe, id);
+    MDB_val nameKey{name.size(), const_cast<char *>(name.data())};
+    MDB_val idVal{idbe.size(), const_cast<char *>(idbe.data())};
+    rc = mdb_put(tx.get(), byNameDbi, &nameKey, &idVal, 0);
+    if (rc)
+      throw MdbError(mdb_strerror(rc));
   }
 
   // -------------------- value/header encoding --------------------
@@ -734,11 +786,247 @@ namespace stardust
     return result;
   }
 
+  inline void dot_product_norm_scalar(const float *x, const float *y, uint32_t dim,
+                                      float &dot_out, float &norm2_y_out)
+  {
+    double dot = 0.0;
+    double norm2 = 0.0;
+    for (uint32_t i = 0; i < dim; ++i)
+    {
+      dot += static_cast<double>(x[i]) * static_cast<double>(y[i]);
+      norm2 += static_cast<double>(y[i]) * static_cast<double>(y[i]);
+    }
+    dot_out = static_cast<float>(dot);
+    norm2_y_out = static_cast<float>(norm2);
+  }
+
   KnnResult Store::knn(const KnnParams &params)
   {
-    (void)params;
-    KnnResult r{};
-    return r; // TODO: implement scan/HNSW
+    KnnResult out{};
+    if (params.k == 0)
+      return out;
+
+    const auto &qbytes = params.query.data;
+    if ((qbytes.size() % 4) != 0)
+      throw MdbError("query vector byte length must be a multiple of 4");
+    uint32_t queryDimFromBytes = static_cast<uint32_t>(qbytes.size() / 4);
+
+    Txn tx(env_.raw(), false);
+
+    uint32_t dim = 0;
+    {
+      auto mk = key_vec_tag_meta_be(params.tagId);
+      MDB_val mk0{mk.size(), const_cast<char *>(mk.data())}, mv{};
+      int mrc = mdb_get(tx.get(), env_.vecTagMeta(), &mk0, &mv);
+      if (mrc == 0)
+      {
+        if (mv.mv_size < 4)
+          throw MdbError("corrupt vecTagMeta entry");
+        dim = read_be32(static_cast<const unsigned char *>(mv.mv_data));
+      }
+      else if (mrc == MDB_NOTFOUND)
+      {
+        KJ_LOG(INFO, "tagId not found");
+        return out;
+      }
+      else
+      {
+        throw MdbError(mdb_strerror(mrc));
+      }
+    }
+
+    if (params.query.dim != 0 && params.query.dim != dim)
+      throw MdbError("provided query dim does not match tagId meta");
+    if (queryDimFromBytes != dim)
+      throw MdbError("query bytes length does not match expected dim for tagId");
+
+    // decode query floats once and compute its L2 norm for cosine similarity
+    std::vector<float> q;
+    q.resize(dim);
+    const unsigned char *qb = reinterpret_cast<const unsigned char *>(qbytes.data());
+    for (uint32_t i = 0; i < dim; ++i)
+    {
+      float f{};
+      std::memcpy(&f, qb + i * 4, 4);
+      q[i] = f;
+    }
+    double qnorm2 = 0.0;
+    for (float v : q)
+      qnorm2 += static_cast<double>(v) * static_cast<double>(v);
+    double qnorm = std::sqrt(qnorm2);
+    if (qnorm == 0.0)
+      qnorm = 1.0;
+
+    // maintain top-k candidates using a min-heap (priority queue)
+    struct Cand
+    {
+      uint64_t id;
+      float score;
+
+      // For min-heap: higher scores have lower priority
+      bool operator<(const Cand &other) const
+      {
+        return score > other.score;
+      }
+    };
+
+    std::priority_queue<Cand> topK;
+
+    auto consider = [&](uint64_t id, float score)
+    {
+      if (topK.size() < params.k)
+      {
+        topK.push(Cand{id, score});
+      }
+      else if (score > topK.top().score)
+      {
+        topK.pop();
+        topK.push(Cand{id, score});
+      }
+    };
+
+    // scan all vectors and pick those matching tagId
+    MDB_cursor *cur{};
+    int rc = mdb_cursor_open(tx.get(), env_.nodeVectors(), &cur);
+    if (rc)
+      throw MdbError(mdb_strerror(rc));
+    MDB_val k{}, v{};
+    rc = mdb_cursor_get(cur, &k, &v, MDB_FIRST);
+    while (rc == 0)
+    {
+      if (k.mv_size >= 12)
+      {
+        const unsigned char *kb = static_cast<const unsigned char *>(k.mv_data);
+        uint64_t nodeId = read_be64(kb + 0);
+        uint32_t tagId = read_be32(kb + 8);
+        if (tagId == params.tagId)
+        {
+          if (v.mv_size == static_cast<size_t>(dim) * 4)
+          {
+            const float *vf = reinterpret_cast<const float *>(v.mv_data);
+
+            float dot, xnorm2;
+            dot_product_norm_scalar(q.data(), vf, dim, dot, xnorm2);
+
+            float xnorm = std::sqrt(xnorm2);
+            float score = 0.0f;
+            if (xnorm > 0.0f)
+              score = dot / (static_cast<float>(qnorm) * xnorm);
+            consider(nodeId, score);
+          }
+          // else: corrupt length for this tag, skip
+        }
+      }
+      rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
+    }
+    mdb_cursor_close(cur);
+
+    std::vector<Cand> results;
+    results.reserve(topK.size());
+    while (!topK.empty())
+    {
+      results.push_back(topK.top());
+      topK.pop();
+    }
+
+    // reverse to get descending order by score
+    std::reverse(results.begin(), results.end());
+
+    out.hits.reserve(results.size());
+    for (const auto &c : results)
+      out.hits.push_back(KnnPair{c.id, c.score});
+    return out;
+  }
+
+  // -------------------- dictionary APIs --------------------
+
+  uint32_t Store::getOrCreateLabelId(const GetOrCreateLabelIdParams &params)
+  {
+    Txn tx(env_.raw(), true);
+    if (auto found = lookup_id_by_name(tx, env_.labelsByName(), params.name))
+      return *found;
+    if (!params.createIfMissing)
+      throw MdbError("label not found");
+    uint32_t id = static_cast<uint32_t>(incr_meta_seq(tx, env_, key_meta_label_seq(), 0));
+    write_name_id_pair(tx, env_.labelIds(), env_.labelsByName(), id, params.name);
+    tx.commit();
+    return id;
+  }
+
+  uint32_t Store::getOrCreateRelTypeId(const GetOrCreateRelTypeIdParams &params)
+  {
+    Txn tx(env_.raw(), true);
+    if (auto found = lookup_id_by_name(tx, env_.relTypesByName(), params.name))
+      return *found;
+    if (!params.createIfMissing)
+      throw MdbError("rel type not found");
+    uint32_t id = static_cast<uint32_t>(incr_meta_seq(tx, env_, key_meta_reltype_seq(), 0));
+    write_name_id_pair(tx, env_.relTypeIds(), env_.relTypesByName(), id, params.name);
+    tx.commit();
+    return id;
+  }
+
+  uint32_t Store::getOrCreatePropKeyId(const GetOrCreatePropKeyIdParams &params)
+  {
+    Txn tx(env_.raw(), true);
+    if (auto found = lookup_id_by_name(tx, env_.propKeysByName(), params.name))
+      return *found;
+    if (!params.createIfMissing)
+      throw MdbError("prop key not found");
+    uint32_t id = static_cast<uint32_t>(incr_meta_seq(tx, env_, key_meta_propkey_seq(), 0));
+    write_name_id_pair(tx, env_.propKeyIds(), env_.propKeysByName(), id, params.name);
+    tx.commit();
+    return id;
+  }
+
+  uint32_t Store::getOrCreateVecTagId(const GetOrCreateVecTagIdParams &params)
+  {
+    Txn tx(env_.raw(), true);
+    if (auto found = lookup_id_by_name(tx, env_.vecTagsByName(), params.name))
+      return *found;
+    if (!params.createIfMissing)
+      throw MdbError("vec tag not found");
+    uint32_t id = static_cast<uint32_t>(incr_meta_seq(tx, env_, key_meta_vectag_seq(), 0));
+    write_name_id_pair(tx, env_.vecTagIds(), env_.vecTagsByName(), id, params.name);
+
+    if (params.dim.has_value())
+    {
+      auto mk = key_vec_tag_meta_be(id);
+      std::string dimv;
+      dimv.reserve(4);
+      put_be32(dimv, static_cast<uint32_t>(*params.dim));
+      MDB_val mvk{mk.size(), const_cast<char *>(mk.data())};
+      MDB_val mvv{dimv.size(), const_cast<char *>(dimv.data())};
+      int prc = mdb_put(tx.get(), env_.vecTagMeta(), &mvk, &mvv, 0);
+      if (prc)
+        throw MdbError(mdb_strerror(prc));
+    }
+    tx.commit();
+    return id;
+  }
+
+  std::string Store::getLabelName(uint32_t id)
+  {
+    Txn tx(env_.raw(), false);
+    return read_string_by_id(tx, env_.labelIds(), id);
+  }
+
+  std::string Store::getRelTypeName(uint32_t id)
+  {
+    Txn tx(env_.raw(), false);
+    return read_string_by_id(tx, env_.relTypeIds(), id);
+  }
+
+  std::string Store::getPropKeyName(uint32_t id)
+  {
+    Txn tx(env_.raw(), false);
+    return read_string_by_id(tx, env_.propKeyIds(), id);
+  }
+
+  std::string Store::getVecTagName(uint32_t id)
+  {
+    Txn tx(env_.raw(), false);
+    return read_string_by_id(tx, env_.vecTagIds(), id);
   }
 
   GetNodeResult Store::getNode(const GetNodeParams &params)

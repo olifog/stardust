@@ -136,5 +136,10 @@ namespace stardust
   inline std::string key_meta_node_seq() { return std::string("nodeSeq"); }
   inline std::string key_meta_edge_seq() { return std::string("edgeSeq"); }
   inline std::string key_meta_schema_version() { return std::string("schemaVersion"); }
+  inline std::string key_meta_label_seq() { return std::string("labelSeq"); }
+  inline std::string key_meta_reltype_seq() { return std::string("relTypeSeq"); }
+  inline std::string key_meta_propkey_seq() { return std::string("propKeySeq"); }
+  inline std::string key_meta_vectag_seq() { return std::string("vecTagSeq"); }
+  inline std::string key_meta_text_seq() { return std::string("textSeq"); }
 
 } // namespace stardust

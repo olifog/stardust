@@ -14,13 +14,13 @@ struct Value {
 }
 
 struct Property {
-  keyId @0 :UInt32; # from propKey dict
-  val   @1 :Value;
+  val @0 :Value;
+  key @1 :Text; 
 }
 
-# sorted label IDs
+# sorted label names
 struct LabelSet {
-  labelIds @0 :List(UInt32);
+  names @0 :List(Text);
 }
 
 # multiple vectors per node, each tagged. vector bytes stay separate from
@@ -30,8 +30,8 @@ struct VectorF32 {
   data @1 :Data;  # float32 bytes, len = dim*4
 }
 struct TaggedVector {
-  tagId  @0 :UInt32;  # from vecTag dict
-  vector @1 :VectorF32;
+  vector @0 :VectorF32;
+  tag    @1 :Text;
 }
 
 # -------------------- node / relationship -----------------------
@@ -48,8 +48,8 @@ struct NodeHeader {
 
 # relationship metadata: single type + KV props (small, bulk in separate bucket)
 struct EdgeMeta {
-  typeId @0 :UInt32;           # from relType dict
-  props  @1 :List(Property);
+  props @0 :List(Property);
+  type  @1 :Text;
 }
 
 struct EdgeRef {
@@ -73,24 +73,24 @@ struct UpsertNodePropsParams {
   id        @0 :UInt64;
   setHot    @1 :List(Property);
   setCold   @2 :List(Property);
-  unsetKeys @3 :List(UInt32);  # propKeyIds to remove (both hot/cold)
+  unsetKeys @3 :List(Text);  # propKeyIds to remove (both hot/cold)
 }
 
 struct SetNodeLabelsParams {
-  id          @0 :UInt64;
-  addLabels   @1 :List(UInt32);
-  removeLabels@2 :List(UInt32);
+  id           @0 :UInt64;
+  addLabels    @1 :List(Text);
+  removeLabels @2 :List(Text);
 }
 
 struct UpsertVectorParams {
   id     @0 :UInt64; # node id
-  tagId  @1 :UInt32;
-  vector @2 :VectorF32;
+  vector @1 :VectorF32;
+  tag    @2 :Text;
 }
 
 struct DeleteVectorParams {
-  id    @0 :UInt64; # node id
-  tagId @1 :UInt32;
+  id  @0 :UInt64; # node id
+  tag @1 :Text;
 }
 
 struct AddEdgeParams {
@@ -102,7 +102,7 @@ struct AddEdgeParams {
 struct UpdateEdgePropsParams {
   edgeId    @0 :UInt64;
   setProps  @1 :List(Property);
-  unsetKeys @2 :List(UInt32);
+  unsetKeys @2 :List(Text);
 }
 
 enum Direction { out @0; in @1; both @2; }
@@ -111,7 +111,7 @@ struct NeighborsParams {
   node        @0 :UInt64;
   direction   @1 :Direction;
   limit       @2 :UInt32;
-  relTypeIn   @3 :List(UInt32);   # filter by relationship types (OR)
+  relTypeIn   @3 :List(Text);   # filter by relationship types (OR)
   neighborHas @4 :LabelSet;       # neighbor must have all of these labels
   # TODO: lots more filters
 }
@@ -122,9 +122,9 @@ struct NeighborsResult {
 
 # KNN against a specific tagged vector index (HNSW per tagId)
 struct KnnParams {
-  tagId     @0 :UInt32;
-  query     @1 :VectorF32;
-  k         @2 :UInt32;
+  tag   @0 :Text;
+  query @1 :VectorF32;
+  k     @2 :UInt32;
   # TODO: filters, pre and post?
 }
 
@@ -152,16 +152,14 @@ struct GetNodeParams { id @0 :UInt64; }
 struct GetNodeResult { header @0 :NodeHeader; }
 
 struct GetNodePropsParams {
-  id     @0 :UInt64;
-  # if empty, return all props (hot + cold)
-  keyIds @1 :List(UInt32);
+  id   @0 :UInt64;
+  keys @1 :List(Text); # if empty, return all props (hot + cold)
 }
 struct GetNodePropsResult { props @0 :List(Property); }
 
 struct GetVectorsParams {
-  id     @0 :UInt64;          # node id
-  # if empty, return all vectors for the node
-  tagIds @1 :List(UInt32);
+  id   @0 :UInt64; # node id
+  tags @1 :List(Text); # if empty, return all vectors for the node
 }
 struct GetVectorsResult { vectors @0 :List(TaggedVector); }
 

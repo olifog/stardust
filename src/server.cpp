@@ -63,35 +63,37 @@ namespace stardust::rpc
       b.setNullv();
     }
 
-    stardust::Property fromRpcProperty(Property::Reader p)
+    stardust::Property fromRpcProperty(Property::Reader p, stardust::Store &store, bool createIfMissing)
     {
       stardust::Property out{};
-      out.keyId = p.getKeyId();
+      auto name = p.getKey();
+      out.keyId = store.getOrCreatePropKeyId(stardust::GetOrCreatePropKeyIdParams{std::string(name.cStr()), createIfMissing});
       out.val = fromRpcValue(p.getVal());
       return out;
     }
 
-    void toRpcProperty(Property::Builder b, const stardust::Property &p)
+    void toRpcProperty(Property::Builder b, const stardust::Property &p, stardust::Store &store)
     {
-      b.setKeyId(p.keyId);
+      auto keyName = store.getPropKeyName(p.keyId);
+      b.setKey(keyName);
       toRpcValue(b.initVal(), p.val);
     }
 
-    stardust::LabelSet fromRpcLabelSet(LabelSet::Reader ls)
+    stardust::LabelSet fromRpcLabelSet(LabelSet::Reader ls, stardust::Store &store, bool createIfMissing)
     {
       stardust::LabelSet out{};
-      auto ids = ls.getLabelIds();
-      out.labelIds.reserve(ids.size());
-      for (auto id : ids)
-        out.labelIds.push_back(id);
+      auto names = ls.getNames();
+      out.labelIds.reserve(names.size());
+      for (auto nm : names)
+        out.labelIds.push_back(store.getOrCreateLabelId(stardust::GetOrCreateLabelIdParams{std::string(nm.cStr()), createIfMissing}));
       return out;
     }
 
-    void toRpcLabelSet(LabelSet::Builder b, const stardust::LabelSet &ls)
+    void toRpcLabelSet(LabelSet::Builder b, const stardust::LabelSet &ls, stardust::Store &store)
     {
-      auto arr = b.initLabelIds(ls.labelIds.size());
+      auto arr = b.initNames(ls.labelIds.size());
       for (uint32_t i = 0; i < ls.labelIds.size(); ++i)
-        arr.set(i, ls.labelIds[i]);
+        arr.set(i, store.getLabelName(ls.labelIds[i]));
     }
 
     stardust::VectorF32 fromRpcVector(VectorF32::Reader v)
@@ -109,17 +111,21 @@ namespace stardust::rpc
       b.setData(kj::ArrayPtr<const capnp::byte>(reinterpret_cast<const capnp::byte *>(v.data.data()), v.data.size()));
     }
 
-    stardust::TaggedVector fromRpcTaggedVector(TaggedVector::Reader tv)
+    stardust::TaggedVector fromRpcTaggedVector(TaggedVector::Reader tv, stardust::Store &store, bool createIfMissing)
     {
       stardust::TaggedVector out{};
-      out.tagId = tv.getTagId();
+      auto nm = tv.getTag();
       out.vector = fromRpcVector(tv.getVector());
+      std::optional<uint16_t> dimOpt;
+      if (createIfMissing && out.vector.dim != 0)
+        dimOpt = out.vector.dim;
+      out.tagId = store.getOrCreateVecTagId(stardust::GetOrCreateVecTagIdParams{std::string(nm.cStr()), createIfMissing, dimOpt});
       return out;
     }
 
-    void toRpcTaggedVector(TaggedVector::Builder b, const stardust::TaggedVector &tv)
+    void toRpcTaggedVector(TaggedVector::Builder b, const stardust::TaggedVector &tv, stardust::Store &store)
     {
-      b.setTagId(tv.tagId);
+      b.setTag(store.getVecTagName(tv.tagId));
       toRpcVector(b.initVector(), tv.vector);
     }
 
@@ -137,13 +143,13 @@ namespace stardust::rpc
       }
     }
 
-    void toRpcNodeHeader(NodeHeader::Builder b, const stardust::NodeHeader &h)
+    void toRpcNodeHeader(NodeHeader::Builder b, const stardust::NodeHeader &h, stardust::Store &store)
     {
       b.setId(h.id);
-      toRpcLabelSet(b.initLabels(), h.labels);
+      toRpcLabelSet(b.initLabels(), h.labels, store);
       auto hp = b.initHotProps(h.hotProps.size());
       for (uint32_t i = 0; i < h.hotProps.size(); ++i)
-        toRpcProperty(hp[i], h.hotProps[i]);
+        toRpcProperty(hp[i], h.hotProps[i], store);
     }
 
   } // namespace
@@ -156,24 +162,24 @@ namespace stardust::rpc
     auto params = p.getParams();
 
     stardust::CreateNodeParams in{};
-    in.labels = fromRpcLabelSet(params.getLabels());
+    in.labels = fromRpcLabelSet(params.getLabels(), store_, true);
     {
       auto hp = params.getHotProps();
       in.hotProps.reserve(hp.size());
       for (auto pr : hp)
-        in.hotProps.push_back(fromRpcProperty(pr));
+        in.hotProps.push_back(fromRpcProperty(pr, store_, true));
     }
     {
       auto cp = params.getColdProps();
       in.coldProps.reserve(cp.size());
       for (auto pr : cp)
-        in.coldProps.push_back(fromRpcProperty(pr));
+        in.coldProps.push_back(fromRpcProperty(pr, store_, true));
     }
     {
       auto vecs = params.getVectors();
       in.vectors.reserve(vecs.size());
       for (auto tv : vecs)
-        in.vectors.push_back(fromRpcTaggedVector(tv));
+        in.vectors.push_back(fromRpcTaggedVector(tv, store_, true));
     }
 
     auto result = store_.createNode(in);
@@ -181,7 +187,7 @@ namespace stardust::rpc
     auto res = ctx.getResults();
     auto out = res.initResult();
     out.initNode().setId(result.id);
-    toRpcNodeHeader(out.initHeader(), result.header);
+    toRpcNodeHeader(out.initHeader(), result.header, store_);
     return kj::READY_NOW;
   }
 
@@ -195,19 +201,19 @@ namespace stardust::rpc
       auto sp = params.getSetHot();
       in.setHot.reserve(sp.size());
       for (auto pr : sp)
-        in.setHot.push_back(fromRpcProperty(pr));
+        in.setHot.push_back(fromRpcProperty(pr, store_, true));
     }
     {
       auto sp = params.getSetCold();
       in.setCold.reserve(sp.size());
       for (auto pr : sp)
-        in.setCold.push_back(fromRpcProperty(pr));
+        in.setCold.push_back(fromRpcProperty(pr, store_, true));
     }
     {
       auto uk = params.getUnsetKeys();
       in.unsetKeys.reserve(uk.size());
       for (auto k : uk)
-        in.unsetKeys.push_back(k);
+        in.unsetKeys.push_back(store_.getOrCreatePropKeyId(stardust::GetOrCreatePropKeyIdParams{std::string(k.cStr()), false}));
     }
     store_.upsertNodeProps(in);
     return kj::READY_NOW;
@@ -222,14 +228,14 @@ namespace stardust::rpc
     {
       auto add = params.getAddLabels();
       in.addLabels.reserve(add.size());
-      for (auto id : add)
-        in.addLabels.push_back(id);
+      for (auto nm : add)
+        in.addLabels.push_back(store_.getOrCreateLabelId(stardust::GetOrCreateLabelIdParams{std::string(nm.cStr()), true}));
     }
     {
       auto rm = params.getRemoveLabels();
       in.removeLabels.reserve(rm.size());
-      for (auto id : rm)
-        in.removeLabels.push_back(id);
+      for (auto nm : rm)
+        in.removeLabels.push_back(store_.getOrCreateLabelId(stardust::GetOrCreateLabelIdParams{std::string(nm.cStr()), false}));
     }
     store_.setNodeLabels(in);
     return kj::READY_NOW;
@@ -241,8 +247,13 @@ namespace stardust::rpc
     auto params = p.getParams();
     stardust::UpsertVectorParams in{};
     in.id = params.getId();
-    in.tagId = params.getTagId();
     in.vector = fromRpcVector(params.getVector());
+    {
+      std::optional<uint16_t> dimOpt;
+      if (in.vector.dim != 0)
+        dimOpt = in.vector.dim;
+      in.tagId = store_.getOrCreateVecTagId(stardust::GetOrCreateVecTagIdParams{std::string(params.getTag().cStr()), true, dimOpt});
+    }
     store_.upsertVector(in);
     return kj::READY_NOW;
   }
@@ -253,7 +264,7 @@ namespace stardust::rpc
     auto params = p.getParams();
     stardust::DeleteVectorParams in{};
     in.id = params.getId();
-    in.tagId = params.getTagId();
+    in.tagId = store_.getOrCreateVecTagId(stardust::GetOrCreateVecTagIdParams{std::string(params.getTag().cStr()), false});
     store_.deleteVector(in);
     return kj::READY_NOW;
   }
@@ -266,12 +277,12 @@ namespace stardust::rpc
     stardust::AddEdgeParams in{};
     in.src = params.getSrc();
     in.dst = params.getDst();
-    in.meta.typeId = params.getMeta().getTypeId();
+    in.meta.typeId = store_.getOrCreateRelTypeId(stardust::GetOrCreateRelTypeIdParams{std::string(params.getMeta().getType().cStr()), true});
     {
       auto props = params.getMeta().getProps();
       in.meta.props.reserve(props.size());
       for (auto pr : props)
-        in.meta.props.push_back(fromRpcProperty(pr));
+        in.meta.props.push_back(fromRpcProperty(pr, store_, true));
     }
 
     auto edge = store_.addEdge(in);
@@ -294,13 +305,13 @@ namespace stardust::rpc
       auto sp = params.getSetProps();
       in.setProps.reserve(sp.size());
       for (auto pr : sp)
-        in.setProps.push_back(fromRpcProperty(pr));
+        in.setProps.push_back(fromRpcProperty(pr, store_, true));
     }
     {
       auto uk = params.getUnsetKeys();
       in.unsetKeys.reserve(uk.size());
       for (auto k : uk)
-        in.unsetKeys.push_back(k);
+        in.unsetKeys.push_back(store_.getOrCreatePropKeyId(stardust::GetOrCreatePropKeyIdParams{std::string(k.cStr()), false}));
     }
     store_.updateEdgeProps(in);
     return kj::READY_NOW;
@@ -315,12 +326,12 @@ namespace stardust::rpc
     in.direction = fromRpcDirection(params.getDirection());
     in.limit = params.getLimit();
     {
-      auto r = params.getRelTypeIn();
-      in.relTypeIn.reserve(r.size());
-      for (auto x : r)
-        in.relTypeIn.push_back(x);
+      auto rn = params.getRelTypeIn();
+      in.relTypeIn.reserve(rn.size());
+      for (auto nm : rn)
+        in.relTypeIn.push_back(store_.getOrCreateRelTypeId(stardust::GetOrCreateRelTypeIdParams{std::string(nm.cStr()), false}));
     }
-    in.neighborHas = fromRpcLabelSet(params.getNeighborHas());
+    in.neighborHas = fromRpcLabelSet(params.getNeighborHas(), store_, false);
 
     auto resv = store_.neighbors(in);
 
@@ -337,7 +348,7 @@ namespace stardust::rpc
     auto p = ctx.getParams();
     auto params = p.getParams();
     stardust::KnnParams in{};
-    in.tagId = params.getTagId();
+    in.tagId = store_.getOrCreateVecTagId(stardust::GetOrCreateVecTagIdParams{std::string(params.getTag().cStr()), false});
     in.query = fromRpcVector(params.getQuery());
     in.k = params.getK();
     auto resv = store_.knn(in);
@@ -367,13 +378,14 @@ namespace stardust::rpc
       {
         stardust::CreateNodeParams in{};
         auto r = op.getCreateNode();
-        in.labels = fromRpcLabelSet(r.getLabels());
+        in.labels = fromRpcLabelSet(r.getLabels(), store_, true);
         for (auto pr : r.getHotProps())
-          in.hotProps.push_back(fromRpcProperty(pr));
+          in.hotProps.push_back(fromRpcProperty(pr, store_, true));
         for (auto pr : r.getColdProps())
-          in.coldProps.push_back(fromRpcProperty(pr));
+          in.coldProps.push_back(fromRpcProperty(pr, store_, true));
         for (auto tv : r.getVectors())
-          in.vectors.push_back(fromRpcTaggedVector(tv));
+          // TODO: check if tag exists, 
+          in.vectors.push_back(fromRpcTaggedVector(tv, store_, true));
         (void)store_.createNode(in);
         break;
       }
@@ -383,11 +395,11 @@ namespace stardust::rpc
         auto r = op.getUpsertNodeProps();
         in.id = r.getId();
         for (auto pr : r.getSetHot())
-          in.setHot.push_back(fromRpcProperty(pr));
+          in.setHot.push_back(fromRpcProperty(pr, store_, true));
         for (auto pr : r.getSetCold())
-          in.setCold.push_back(fromRpcProperty(pr));
+          in.setCold.push_back(fromRpcProperty(pr, store_, true));
         for (auto k : r.getUnsetKeys())
-          in.unsetKeys.push_back(k);
+          in.unsetKeys.push_back(store_.getOrCreatePropKeyId(stardust::GetOrCreatePropKeyIdParams{std::string(k.cStr()), false}));
         store_.upsertNodeProps(in);
         break;
       }
@@ -396,10 +408,10 @@ namespace stardust::rpc
         stardust::SetNodeLabelsParams in{};
         auto r = op.getSetNodeLabels();
         in.id = r.getId();
-        for (auto x : r.getAddLabels())
-          in.addLabels.push_back(x);
-        for (auto x : r.getRemoveLabels())
-          in.removeLabels.push_back(x);
+        for (auto nm : r.getAddLabels())
+          in.addLabels.push_back(store_.getOrCreateLabelId(stardust::GetOrCreateLabelIdParams{std::string(nm.cStr()), true}));
+        for (auto nm : r.getRemoveLabels())
+          in.removeLabels.push_back(store_.getOrCreateLabelId(stardust::GetOrCreateLabelIdParams{std::string(nm.cStr()), false}));
         store_.setNodeLabels(in);
         break;
       }
@@ -408,8 +420,13 @@ namespace stardust::rpc
         stardust::UpsertVectorParams in{};
         auto r = op.getUpsertVector();
         in.id = r.getId();
-        in.tagId = r.getTagId();
         in.vector = fromRpcVector(r.getVector());
+        {
+          std::optional<uint16_t> dimOpt;
+          if (in.vector.dim != 0)
+            dimOpt = in.vector.dim;
+          in.tagId = store_.getOrCreateVecTagId(stardust::GetOrCreateVecTagIdParams{std::string(r.getTag().cStr()), true, dimOpt});
+        }
         store_.upsertVector(in);
         break;
       }
@@ -418,7 +435,7 @@ namespace stardust::rpc
         stardust::DeleteVectorParams in{};
         auto r = op.getDeleteVector();
         in.id = r.getId();
-        in.tagId = r.getTagId();
+        in.tagId = store_.getOrCreateVecTagId(stardust::GetOrCreateVecTagIdParams{std::string(r.getTag().cStr()), false});
         store_.deleteVector(in);
         break;
       }
@@ -428,9 +445,9 @@ namespace stardust::rpc
         auto r = op.getAddEdge();
         in.src = r.getSrc();
         in.dst = r.getDst();
-        in.meta.typeId = r.getMeta().getTypeId();
+        in.meta.typeId = store_.getOrCreateRelTypeId(stardust::GetOrCreateRelTypeIdParams{std::string(r.getMeta().getType().cStr()), true});
         for (auto pr : r.getMeta().getProps())
-          in.meta.props.push_back(fromRpcProperty(pr));
+          in.meta.props.push_back(fromRpcProperty(pr, store_, true));
         (void)store_.addEdge(in);
         break;
       }
@@ -440,9 +457,9 @@ namespace stardust::rpc
         auto r = op.getUpdateEdgeProps();
         in.edgeId = r.getEdgeId();
         for (auto pr : r.getSetProps())
-          in.setProps.push_back(fromRpcProperty(pr));
+          in.setProps.push_back(fromRpcProperty(pr, store_, true));
         for (auto k : r.getUnsetKeys())
-          in.unsetKeys.push_back(k);
+          in.unsetKeys.push_back(store_.getOrCreatePropKeyId(stardust::GetOrCreatePropKeyIdParams{std::string(k.cStr()), false}));
         store_.updateEdgeProps(in);
         break;
       }
@@ -462,7 +479,7 @@ namespace stardust::rpc
     auto resv = store_.getNode(in);
     auto res = ctx.getResults();
     auto out = res.initResult();
-    toRpcNodeHeader(out.initHeader(), resv.header);
+    toRpcNodeHeader(out.initHeader(), resv.header, store_);
     return kj::READY_NOW;
   }
 
@@ -473,17 +490,17 @@ namespace stardust::rpc
     stardust::GetNodePropsParams in{};
     in.id = params.getId();
     {
-      auto ks = params.getKeyIds();
+      auto ks = params.getKeys();
       in.keyIds.reserve(ks.size());
       for (auto k : ks)
-        in.keyIds.push_back(k);
+        in.keyIds.push_back(store_.getOrCreatePropKeyId(stardust::GetOrCreatePropKeyIdParams{std::string(k.cStr()), false}));
     }
     auto resv = store_.getNodeProps(in);
     auto res = ctx.getResults();
     auto out = res.initResult();
     auto props = out.initProps(resv.props.size());
     for (uint32_t i = 0; i < resv.props.size(); ++i)
-      toRpcProperty(props[i], resv.props[i]);
+      toRpcProperty(props[i], resv.props[i], store_);
     return kj::READY_NOW;
   }
 
@@ -494,17 +511,17 @@ namespace stardust::rpc
     stardust::GetVectorsParams in{};
     in.id = params.getId();
     {
-      auto ids = params.getTagIds();
-      in.tagIds.reserve(ids.size());
-      for (auto x : ids)
-        in.tagIds.push_back(x);
+      auto tags = params.getTags();
+      in.tagIds.reserve(tags.size());
+      for (auto nm : tags)
+        in.tagIds.push_back(store_.getOrCreateVecTagId(stardust::GetOrCreateVecTagIdParams{std::string(nm.cStr()), false}));
     }
     auto resv = store_.getVectors(in);
     auto res = ctx.getResults();
     auto out = res.initResult();
     auto vecs = out.initVectors(resv.vectors.size());
     for (uint32_t i = 0; i < resv.vectors.size(); ++i)
-      toRpcTaggedVector(vecs[i], resv.vectors[i]);
+      toRpcTaggedVector(vecs[i], resv.vectors[i], store_);
     return kj::READY_NOW;
   }
 
