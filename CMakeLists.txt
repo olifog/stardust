@@ -1,8 +1,10 @@
 cmake_minimum_required(VERSION 3.30)
-project(stardust CXX)
+project(stardust C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LMDB REQUIRED IMPORTED_TARGET lmdb)
@@ -38,10 +40,30 @@ add_library(stardust_rpc STATIC
 target_link_libraries(stardust_rpc PUBLIC stardust CapnProto::capnp-rpc CapnProto::kj-async)
 target_include_directories(stardust_rpc PUBLIC ${CMAKE_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR})
 
+# ------------- HTTP server (mongoose) -------------
+
+include(FetchContent)
+FetchContent_Declare(
+  mongoose
+  URL https://github.com/cesanta/mongoose/archive/refs/tags/7.18.tar.gz
+)
+FetchContent_MakeAvailable(mongoose)
+
+add_library(mongoose STATIC
+  ${mongoose_SOURCE_DIR}/mongoose.c
+)
+target_include_directories(mongoose PUBLIC ${mongoose_SOURCE_DIR})
+
+add_library(stardust_http STATIC
+  src/http_server.cpp
+)
+target_link_libraries(stardust_http PUBLIC stardust mongoose)
+target_include_directories(stardust_http PUBLIC ${CMAKE_SOURCE_DIR}/src)
+
 add_executable(stardustd
   src/main.cpp
 )
-target_link_libraries(stardustd PRIVATE stardust_rpc)
+target_link_libraries(stardustd PRIVATE stardust_rpc stardust_http)
 
 add_executable(stardust_client
   src/client_example.cpp

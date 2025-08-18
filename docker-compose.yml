@@ -11,6 +11,8 @@ services:
     tty: true
     stdin_open: true
     command: ['bash', '-lc', 'make run PRESET=dev-docker ARGS="${STARDUST_ARGS:--v}"']
+    ports:
+      - "${STARDUST_HTTP_PORT:-8080}:8080"
 
   test:
     build:
