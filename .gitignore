@@ -3,4 +3,8 @@ build/
 .idea/
 data/
 .vscode
+__pycache__/
 build-linux
+.venv
+.mypy_cache
+.ruff_cache

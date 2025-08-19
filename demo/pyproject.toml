@@ -1,0 +1,78 @@
+[project]
+name = "demo"
+version = "0.1.0"
+description = "Stardust demo"
+readme = "README.md"
+authors = [
+    { name = "olifog", email = "oliverfogelin@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "stardust",
+]
+
+[project.scripts]
+demo = "demo:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build]
+packages = [
+    "src/demo",
+]
+
+[tool.uv.sources]
+stardust = { path = "../clients/python", editable = true }
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.5.0",
+    "mypy>=1.10.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+indent-width = 4
+preview = true
+
+[tool.ruff.lint]
+select = [
+  "E",  # pycodestyle
+  "F",  # pyflakes
+  "I",  # isort
+  "W",  # warnings
+  "UP", # pyupgrade
+  "B",  # flake8-bugbear
+  "BLE",# flake8-blind-except
+  "A",  # flake8-builtins
+]
+ignore = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["demo"]
+combine-as-imports = true
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = true
+disallow_any_generics = false
+no_implicit_optional = true
+check_untyped_defs = true
+show_error_codes = true
+pretty = true
+
+[[tool.mypy.overrides]]
+module = [
+  "stardust",
+  "stardust.*",
+]
+ignore_missing_imports = true

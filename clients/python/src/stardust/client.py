@@ -1,38 +1,47 @@
 from __future__ import annotations
 
+import asyncio
 import os
+import socket
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Optional, cast
 
 import capnp
 
 _SCHEMA_DIR = os.path.join(os.path.dirname(__file__), "schemas")
 _GRAPH_CAPNP_PATH = os.path.join(_SCHEMA_DIR, "graph.capnp")
-graph_capnp = capnp.load(_GRAPH_CAPNP_PATH)
+
+
+def _discover_capnp_include_paths() -> list[str]:
+    paths: list[str] = []
+    env = os.environ.get("CAPNP_INCLUDE_DIR") or os.environ.get("CAPNP_PATH")
+    if env:
+        for p in env.split(os.pathsep):
+            if p:
+                paths.append(p)
+    common_candidates = [
+        "/opt/homebrew/include",
+        "/usr/local/include",
+        "/usr/include",
+    ]
+    for base in common_candidates:
+        if os.path.exists(os.path.join(base, "capnp", "c++.capnp")):
+            paths.append(base)
+    seen: set[str] = set()
+    unique_paths: list[str] = []
+    for p in paths:
+        if p not in seen:
+            seen.add(p)
+            unique_paths.append(p)
+    return unique_paths
+
+
+_CAPNP_IMPORT_DIRS = _discover_capnp_include_paths()
+graph_capnp = capnp.load(_GRAPH_CAPNP_PATH, imports=_CAPNP_IMPORT_DIRS)
 
 
 # -------------------- Public API --------------------
-
-
-def connect(url: str) -> StardustClient:
-    """Connect to a Stardust server over Cap'n Proto.
-
-    Supported URL forms:
-    - "unix:/path/to/socket" → connect to a UNIX domain socket
-    - "tcp://host:port" or "host:port" → TCP connection
-
-    TODO(embedded): support "embedded:/path" to run the engine in-process.
-    """
-    if url.startswith("embedded:"):
-        # TODO(embedded): delegate to an embedded engine adapter when available
-        raise RuntimeError("Embedded engine not available. Install future embedded extra.")
-
-    addr = _normalize_address(url)
-    client = _make_two_party_client(addr)
-    service = client.bootstrap().cast_as(graph_capnp.Stardust)
-    return StardustClient(service)
-
 
 def _normalize_address(url: str) -> str:
     if url.startswith("unix:"):
@@ -42,12 +51,30 @@ def _normalize_address(url: str) -> str:
     return url
 
 
-def _make_two_party_client(addr: str) -> capnp.TwoPartyClient:
+async def connect(url: str) -> StardustClient:
+    if url.startswith("embedded:"):
+        raise RuntimeError("Embedded engine not available. Install future embedded extra.")
+
+    addr = _normalize_address(url)
+
     if addr.startswith("unix:"):
-        # pycapnp uses 'unix:/path' string directly
-        return capnp.TwoPartyClient(addr)
-    # TCP host:port
-    return capnp.TwoPartyClient(addr)
+        path = addr[len("unix:") :]
+        connection = await capnp.AsyncIoStream.create_unix_connection(path=path)
+    else:
+        host, port_str = addr.split(":", 1)
+        port = int(port_str)
+        connection = await capnp.AsyncIoStream.create_connection(host=host, port=port)
+
+    tp_client = capnp.TwoPartyClient(connection)
+
+    service = tp_client.bootstrap().cast_as(graph_capnp.Stardust)
+    return StardustClient(service, _async_transport=_AsyncTransport(connection, tp_client))
+
+
+class _AsyncTransport:
+    def __init__(self, connection: Any, capnp_client: Any) -> None:
+        self.connection = connection
+        self.capnp_client = capnp_client
 
 
 @dataclass
@@ -62,12 +89,30 @@ class StardustClient:
     This class provides snake_case methods and Python-native types.
     """
 
-    def __init__(self, svc: Any) -> None:
+    def __init__(self, svc: Any, _async_transport: Optional[_AsyncTransport] = None) -> None:
         self._svc = svc
+        self._async_transport = _async_transport
+
+    # -------------------- Lifecycle --------------------
+
+    def is_async(self) -> bool:
+        return self._async_transport is not None
+
+    async def aclose(self) -> None:
+        if self._async_transport is None:
+            return
+        try:
+            self._async_transport.capnp_client.close()
+        except Exception:
+            pass
+        try:
+            self._async_transport.connection.close()
+        except Exception:
+            pass
 
     # -------------------- Writes --------------------
 
-    def create_node(
+    async def create_node(
         self,
         labels: Iterable[str] | None = None,
         hot_props: Mapping[str, Any] | None = None,
@@ -80,27 +125,27 @@ class StardustClient:
         """
         req = self._svc.createNode_request()
         params = req.init("params")
-        # labels
         ls = params.init("labels")
+
         _names = list(labels or [])
         arr = ls.init("names", len(_names))
         for i, nm in enumerate(_names):
             arr[i] = nm
-        # hot props
+
         _hot = list((hot_props or {}).items())
         hp = params.init("hotProps", len(_hot))
         for i, (k, v) in enumerate(_hot):
             item = hp[i]
             item.key = k
+
             _set_value(item.init("val"), v)
-        # cold props
         _cold = list((cold_props or {}).items())
         cp = params.init("coldProps", len(_cold))
         for i, (k, v) in enumerate(_cold):
             item = cp[i]
             item.key = k
             _set_value(item.init("val"), v)
-        # vectors
+
         _vecs = list(vectors or [])
         vp = params.init("vectors", len(_vecs))
         for i, (tag, vec) in enumerate(_vecs):
@@ -108,13 +153,12 @@ class StardustClient:
             item.tag = tag
             vf = item.init("vector")
             vf.dim = len(vec)
-            # serialize float32 vector into bytes
             vf.data = _floats_to_bytes(vec)
-        res = req.send().wait()
-        # Cap'n Proto result can be accessed with .to_dict() in pycapnp
-        return cast(dict[str, Any], res.to_dict())
 
-    def upsert_vector(self, node_id: int, tag: str, vector: list[float]) -> None:
+        res = await req.send()
+        return cast(dict[str, Any], res.to_dict()['result'])
+
+    async def upsert_vector(self, node_id: int, tag: str, vector: list[float]) -> None:
         req = self._svc.upsertVector_request()
         params = req.init("params")
         params.id = node_id
@@ -122,16 +166,16 @@ class StardustClient:
         vf = params.init("vector")
         vf.dim = len(vector)
         vf.data = _floats_to_bytes(vector)
-        req.send().wait()
+        await req.send()
 
-    def delete_vector(self, node_id: int, tag: str) -> None:
+    async def delete_vector(self, node_id: int, tag: str) -> None:
         req = self._svc.deleteVector_request()
         params = req.init("params")
         params.id = node_id
         params.tag = tag
-        req.send().wait()
+        await req.send()
 
-    def add_edge(
+    async def add_edge(
         self, src: int, dst: int, edge_type: str, props: Mapping[str, Any] | None = None
     ) -> dict[str, Any]:
         req = self._svc.addEdge_request()
@@ -146,19 +190,19 @@ class StardustClient:
             item = arr[i]
             item.key = k
             _set_value(item.init("val"), v)
-        res = req.send().wait()
-        return cast(dict[str, Any], res.to_dict())
+        res = await req.send()
+        return cast(dict[str, Any], res.to_dict()['edge'])
 
     # -------------------- Reads --------------------
 
-    def get_node(self, node_id: int) -> dict[str, Any]:
+    async def get_node(self, node_id: int) -> dict[str, Any]:
         req = self._svc.getNode_request()
         params = req.init("params")
         params.id = node_id
-        res = req.send().wait()
-        return cast(dict[str, Any], res.to_dict())
+        res = await req.send()
+        return cast(dict[str, Any], res.to_dict()['result'])
 
-    def get_node_props(self, node_id: int, keys: Iterable[str] | None = None) -> dict[str, Any]:
+    async def get_node_props(self, node_id: int, keys: Iterable[str] | None = None) -> dict[str, Any]:
         req = self._svc.getNodeProps_request()
         params = req.init("params")
         params.id = node_id
@@ -166,10 +210,10 @@ class StardustClient:
         arr = params.init("keys", len(_keys))
         for i, k in enumerate(_keys):
             arr[i] = k
-        res = req.send().wait()
-        return cast(dict[str, Any], res.to_dict())
+        res = await req.send()
+        return cast(dict[str, Any], res.to_dict()['result'])
 
-    def get_vectors(self, node_id: int, tags: Iterable[str] | None = None) -> dict[str, Any]:
+    async def get_vectors(self, node_id: int, tags: Iterable[str] | None = None) -> dict[str, Any]:
         req = self._svc.getVectors_request()
         params = req.init("params")
         params.id = node_id
@@ -177,34 +221,34 @@ class StardustClient:
         arr = params.init("tags", len(_tags))
         for i, t in enumerate(_tags):
             arr[i] = t
-        res = req.send().wait()
-        return cast(dict[str, Any], res.to_dict())
+        res = await req.send()
+        return cast(dict[str, Any], res.to_dict()['result'])
 
-    def get_edge_header(self, edge_id: int) -> dict[str, Any]:
+    async def get_edge_header(self, edge_id: int) -> dict[str, Any]:
         req = self._svc.getEdgeHeader_request()
         params = req.init("params")
         params.edgeId = edge_id
-        res = req.send().wait()
-        return cast(dict[str, Any], res.to_dict())
+        res = await req.send()
+        return cast(dict[str, Any], res.to_dict()['result'])
 
-    def list_adjacency(self, node: int, direction: str = "both", limit: int = 100) -> dict[str, Any]:
+    async def list_adjacency(self, node: int, direction: str = "both", limit: int = 100) -> dict[str, Any]:
         req = self._svc.listAdjacency_request()
         params = req.init("params")
         params.node = node
         params.limit = limit
         params.direction = _direction_from_str(direction)
-        res = req.send().wait()
-        return cast(dict[str, Any], res.to_dict())
+        res = await req.send()
+        return cast(dict[str, Any], res.to_dict()['result'])
 
-    def degree(self, node: int, direction: str = "both") -> dict[str, Any]:
+    async def degree(self, node: int, direction: str = "both") -> dict[str, Any]:
         req = self._svc.degree_request()
         params = req.init("params")
         params.node = node
         params.direction = _direction_from_str(direction)
-        res = req.send().wait()
-        return cast(dict[str, Any], res.to_dict())
+        res = await req.send()
+        return cast(dict[str, Any], res.to_dict()['result'])
 
-    def knn(self, tag: str, query: list[float], k: int) -> list[KnnHit]:
+    async def knn(self, tag: str, query: list[float], k: int) -> list[KnnHit]:
         req = self._svc.knn_request()
         params = req.init("params")
         params.tag = tag
@@ -212,7 +256,7 @@ class StardustClient:
         vf.dim = len(query)
         vf.data = _floats_to_bytes(query)
         params.k = k
-        res = req.send().wait()
+        res = await req.send()
         out: list[KnnHit] = []
         for h in res.result.hits:
             out.append(KnnHit(id=int(h.id), score=float(h.score)))
