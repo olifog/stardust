@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import capnp
 import os
 from typing import Any
 
+import capnp
 from stardust import connect
 
 
@@ -28,9 +28,7 @@ async def main_async() -> None:
         "Hugo Weaving",
         "Ana de Armas",
     ]:
-        res = await client.create_node(
-            labels=["Person", "Actor"], hot_props={"name": name}
-        )
+        res = await client.create_node(labels=["Person", "Actor"], hot_props={"name": name})
         actors[name] = int(res["node"]["id"])  # type: ignore[index]
 
     directors: dict[str, int] = {}
@@ -39,9 +37,7 @@ async def main_async() -> None:
         "Lilly Wachowski",
         "Chad Stahelski",
     ]:
-        res = await client.create_node(
-            labels=["Person", "Director"], hot_props={"name": name}
-        )
+        res = await client.create_node(labels=["Person", "Director"], hot_props={"name": name})
         directors[name] = int(res["node"]["id"])  # type: ignore[index]
 
     # Movies
@@ -91,11 +87,10 @@ async def main_async() -> None:
             props={},
         )
 
-    # Small read to verify something exists
-    any_movie_id: int = next(iter(movies.values()))
-    header: dict[str, Any] = await client.get_node(any_movie_id)
-    print("Inserted graph. Example movie header:")
-    print(header)
+    for node in movies.values():
+        header: dict[str, Any] = await client.get_node(node)
+        print(header)
+        print(await client.list_adjacency(node))
 
 
 def main() -> None:

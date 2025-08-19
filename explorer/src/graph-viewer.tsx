@@ -108,7 +108,7 @@ export const GraphViewer = () => {
         console.error("Failed to load node/neighbours", err);
       }
     },
-    [],
+    []
   );
 
   const handleNodeClick = useCallback(
@@ -130,13 +130,13 @@ export const GraphViewer = () => {
         fgRef.current?.cameraPosition(
           { x: x * distRatio, y: y * distRatio, z: z * distRatio },
           { x, y, z },
-          1000,
+          1000
         );
       } else {
         setPendingFocusId(id);
       }
     },
-    [addNodeAndNeighbours],
+    [addNodeAndNeighbours]
   );
 
   useEffect(() => {
@@ -154,7 +154,7 @@ export const GraphViewer = () => {
         fgRef.current?.cameraPosition(
           { x: x * distRatio, y: y * distRatio, z: z * distRatio },
           { x, y, z },
-          1000,
+          1000
         );
         setPendingFocusId(null);
         return;

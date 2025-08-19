@@ -122,7 +122,6 @@ namespace stardust
     std::vector<uint32_t> unsetKeys{};
   };
 
-
   struct KnnParams
   {
     uint32_t tagId{0};
@@ -162,7 +161,7 @@ namespace stardust
 
   struct GetEdgeHeaderResult
   {
-    EdgeRef ref{};     // {id, src, dst}
+    EdgeRef ref{}; // {id, src, dst}
     uint32_t typeId{0};
   };
 
@@ -288,7 +287,6 @@ namespace stardust
     GetEdgePropsResult getEdgeProps(const GetEdgePropsParams &params);
     ScanNodesByLabelResult scanNodesByLabel(const ScanNodesByLabelParams &params);
     DegreeResult degree(const DegreeParams &params);
-    
 
     // string interning helpers
     uint32_t getOrCreateLabelId(const GetOrCreateLabelIdParams &params);

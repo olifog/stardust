@@ -22,7 +22,7 @@ export const NodeDetails = ({
   const [nodeData, setNodeData] = useState<NodeResponse | null>(null);
   const [propsData, setPropsData] = useState<NodePropsResponse | null>(null);
   const [vectorsData, setVectorsData] = useState<GetVectorsResponse | null>(
-    null,
+    null
   );
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +42,7 @@ export const NodeDetails = ({
         setVectorsData(v);
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Failed to load node details",
+          err instanceof Error ? err.message : "Failed to load node details"
         );
       } finally {
         setLoading(false);

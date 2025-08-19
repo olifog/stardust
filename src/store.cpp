@@ -742,7 +742,6 @@ namespace stardust
     tx.commit();
   }
 
-
   ListAdjacencyResult Store::listAdjacency(const ListAdjacencyParams &params)
   {
     ListAdjacencyResult out{};
@@ -798,7 +797,8 @@ namespace stardust
     auto r = listAdjacency(p);
     std::vector<uint64_t> ids;
     ids.reserve(r.items.size());
-    for (const auto &a : r.items) ids.push_back(a.neighborId);
+    for (const auto &a : r.items)
+      ids.push_back(a.neighborId);
     return ids;
   }
 
@@ -808,7 +808,8 @@ namespace stardust
     auto r = listAdjacency(p);
     std::vector<uint64_t> ids;
     ids.reserve(r.items.size());
-    for (const auto &a : r.items) ids.push_back(a.neighborId);
+    for (const auto &a : r.items)
+      ids.push_back(a.neighborId);
     return ids;
   }
 
@@ -1303,13 +1304,19 @@ namespace stardust
       while (rc == 0)
       {
         const unsigned char *kb = static_cast<const unsigned char *>(ck.mv_data);
-        if (ck.mv_size < 8 + 4 + 8 + 8) break;
+        if (ck.mv_size < 8 + 4 + 8 + 8)
+          break;
         uint64_t src = read_be64(kb + 0);
-        if (src != out.ref.src) break;
+        if (src != out.ref.src)
+          break;
         uint32_t typeId = read_be32(kb + 8);
         uint64_t dst = read_be64(kb + 12);
         uint64_t eid = read_be64(kb + 20);
-        if (dst == out.ref.dst && eid == out.ref.id) { foundType = typeId; break; }
+        if (dst == out.ref.dst && eid == out.ref.id)
+        {
+          foundType = typeId;
+          break;
+        }
         rc = mdb_cursor_get(cur, &ck, &cv, MDB_NEXT);
       }
       mdb_cursor_close(cur);
@@ -1334,9 +1341,11 @@ namespace stardust
       while (rc == 0)
       {
         const unsigned char *kb = static_cast<const unsigned char *>(k.mv_data);
-        if (k.mv_size < 8 + 4) break;
+        if (k.mv_size < 8 + 4)
+          break;
         uint64_t major = read_be64(kb + 0);
-        if (major != params.edgeId) break;
+        if (major != params.edgeId)
+          break;
         uint32_t keyId = read_be32(kb + 8);
         Value val{};
         decode_value(static_cast<const unsigned char *>(v.mv_data), static_cast<const unsigned char *>(v.mv_data) + v.mv_size, val);
@@ -1381,9 +1390,11 @@ namespace stardust
       if (params.limit != 0 && out.nodeIds.size() >= params.limit)
         break;
       const unsigned char *kb = static_cast<const unsigned char *>(k.mv_data);
-      if (k.mv_size < 4 + 8) break;
+      if (k.mv_size < 4 + 8)
+        break;
       uint32_t labelId = read_be32(kb + 0);
-      if (labelId != params.labelId) break;
+      if (labelId != params.labelId)
+        break;
       uint64_t nodeId = read_be64(kb + 4);
       out.nodeIds.push_back(nodeId);
       rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
@@ -1410,16 +1421,20 @@ namespace stardust
       while (rc == 0)
       {
         const unsigned char *kb = static_cast<const unsigned char *>(k.mv_data);
-        if (k.mv_size < 8 + 4 + 8 + 8) break;
+        if (k.mv_size < 8 + 4 + 8 + 8)
+          break;
         uint64_t major = read_be64(kb + 0);
-        if (major != params.node) break;
+        if (major != params.node)
+          break;
         out.count++;
         rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
       }
       mdb_cursor_close(cur);
     };
-    if (params.direction == Direction::Out || params.direction == Direction::Both) countDir(true);
-    if (params.direction == Direction::In || params.direction == Direction::Both) countDir(false);
+    if (params.direction == Direction::Out || params.direction == Direction::Both)
+      countDir(true);
+    if (params.direction == Direction::In || params.direction == Direction::Both)
+      countDir(false);
     return out;
   }
 

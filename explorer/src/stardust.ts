@@ -119,7 +119,7 @@ export const upsertNodeProps = async (params: {
       ? Object.entries(obj)
           .map(
             ([k, v]) =>
-              `${encodeURIComponent(k)}=${encodeURIComponent(encodeVal(v))}`,
+              `${encodeURIComponent(k)}=${encodeURIComponent(encodeVal(v))}`
           )
           .join(",")
       : undefined;
@@ -169,7 +169,7 @@ export const updateEdgeProps = async (params: {
       ? Object.entries(obj)
           .map(
             ([k, v]) =>
-              `${encodeURIComponent(k)}=${encodeURIComponent(encodeVal(v))}`,
+              `${encodeURIComponent(k)}=${encodeURIComponent(encodeVal(v))}`
           )
           .join(",")
       : undefined;
@@ -197,7 +197,7 @@ export const getVectors = async (id: number, tags?: string[]) => {
 export const upsertVector = async (
   params:
     | { id: number; tag: string; data: number[] }
-    | { id: number; tag: string; dataB64: string; dim: number },
+    | { id: number; tag: string; dataB64: string; dim: number }
 ) => {
   if ("data" in params) {
     const q = buildQuery({
@@ -249,7 +249,7 @@ export interface NodeWithNeighboursResult {
 
 export const getNodeWithNeighbours = async (
   id: number,
-  params?: { direction?: "out" | "in" | "both"; limit?: number },
+  params?: { direction?: "out" | "in" | "both"; limit?: number }
 ): Promise<NodeWithNeighboursResult> => {
   const [{ header }, { items }] = await Promise.all([
     getNode(id),
@@ -270,7 +270,7 @@ export const getNodeWithNeighbours = async (
       } catch {
         // ignore individual neighbour fetch failures
       }
-    }),
+    })
   );
 
   const edges: Edge[] = items.map((row) => {

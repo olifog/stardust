@@ -63,15 +63,20 @@ endpoints:
 - [X] where is vecTagMeta written
 - [ ] partition vectors by tagId
 - [X] way more tests, make sure things are working properly
-  - [ ] test with real embedding model
 - [X] implement interning of various strings properly (label names, property key names, types, etc.)
 - [X] intern text props
 - [X] expand out the API, more CRUD + query filters etc.
 - [X] add in http server alternative to capnproto
-- [ ] make example graph rag application
-- [ ] hnsw index for vector search
+- [x] initial python sdk wrapper around capnproto
+- [ ] tidy up http server
+- [ ] add the 4 new http queries to rpc server
+- [ ] initial typescript sdk wrapper around http
+- [ ] add colors to explorer
+- [ ] add embeddings + actual lmdb data for the demo
+- [ ] add a couple graph algos, betweenness centrality, pathfinding
 - [ ] expose http api as (read only) mcp server
 - [ ] make custom extension to cypher, make a grammar, register queries to precompile them (?)
+- [ ] hnsw index for vector search
 - [ ] configurable similarity metric
 
 longer term:
@@ -84,4 +89,3 @@ longer term:
 - [ ] auth
 - [ ] cli installer, docker image, etc.
 - [ ] inbuilt opinionated concept of versioning (?), layer on top of primitives
-- [ ] python/ts sdks

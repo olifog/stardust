@@ -16,12 +16,17 @@ namespace stardust::rpc
       while (s < e)
       {
         unsigned char c = *s++;
-        if (c < 0x80) continue;
-        unsigned int extra = (c >= 0xF0) ? 3 : (c >= 0xE0) ? 2 : (c >= 0xC0) ? 1 : 0xFF;
-        if (extra == 0xFF || s + extra > e) return false;
+        if (c < 0x80)
+          continue;
+        unsigned int extra = (c >= 0xF0) ? 3 : (c >= 0xE0) ? 2
+                                           : (c >= 0xC0)   ? 1
+                                                           : 0xFF;
+        if (extra == 0xFF || s + extra > e)
+          return false;
         for (unsigned int i = 0; i < extra; ++i)
         {
-          if ((s[i] & 0xC0) != 0x80) return false;
+          if ((s[i] & 0xC0) != 0x80)
+            return false;
         }
         s += extra;
       }
@@ -353,22 +358,34 @@ namespace stardust::rpc
 
   kj::Promise<void> StardustImpl::listAdjacency(ListAdjacencyContext ctx)
   {
-    auto p = ctx.getParams(); auto params = p.getParams();
-    stardust::ListAdjacencyParams in{}; in.node = params.getNode(); in.direction = fromRpcDirection(params.getDirection()); in.limit = params.getLimit();
+    auto p = ctx.getParams();
+    auto params = p.getParams();
+    stardust::ListAdjacencyParams in{};
+    in.node = params.getNode();
+    in.direction = fromRpcDirection(params.getDirection());
+    in.limit = params.getLimit();
     auto adj = store_.listAdjacency(in);
-    auto res = ctx.getResults(); auto out = res.initResult();
+    auto res = ctx.getResults();
+    auto out = res.initResult();
     auto items = out.initItems(adj.items.size());
     for (uint32_t i = 0; i < adj.items.size(); ++i)
     {
-      const auto &a = adj.items[i]; auto row = items[i];
+      const auto &a = adj.items[i];
+      auto row = items[i];
       row.setNeighbor(a.neighborId);
       row.setEdgeId(a.edgeId);
       row.setType(store_.getRelTypeName(a.typeId));
       switch (a.direction)
       {
-        case stardust::Direction::Out: row.setDirection(Direction::OUT); break;
-        case stardust::Direction::In:  row.setDirection(Direction::IN);  break;
-        case stardust::Direction::Both: row.setDirection(Direction::BOTH); break;
+      case stardust::Direction::Out:
+        row.setDirection(Direction::OUT);
+        break;
+      case stardust::Direction::In:
+        row.setDirection(Direction::IN);
+        break;
+      case stardust::Direction::Both:
+        row.setDirection(Direction::BOTH);
+        break;
       }
     }
     return kj::READY_NOW;
@@ -376,45 +393,65 @@ namespace stardust::rpc
 
   kj::Promise<void> StardustImpl::getEdgeHeader(GetEdgeHeaderContext ctx)
   {
-    auto p = ctx.getParams(); auto params = p.getParams();
-    stardust::GetEdgeParams in{}; in.edgeId = params.getEdgeId();
+    auto p = ctx.getParams();
+    auto params = p.getParams();
+    stardust::GetEdgeParams in{};
+    in.edgeId = params.getEdgeId();
     auto r = store_.getEdgeHeader(in);
-    auto res = ctx.getResults(); auto out = res.initResult();
-    out.setId(r.ref.id); out.setSrc(r.ref.src); out.setDst(r.ref.dst); out.setType(store_.getRelTypeName(r.typeId));
+    auto res = ctx.getResults();
+    auto out = res.initResult();
+    out.setId(r.ref.id);
+    out.setSrc(r.ref.src);
+    out.setDst(r.ref.dst);
+    out.setType(store_.getRelTypeName(r.typeId));
     return kj::READY_NOW;
   }
 
   kj::Promise<void> StardustImpl::getEdgeProps(GetEdgePropsContext ctx)
   {
     auto p = ctx.getParams();
-    stardust::GetEdgePropsParams in{}; in.edgeId = p.getEdgeId();
+    stardust::GetEdgePropsParams in{};
+    in.edgeId = p.getEdgeId();
     {
-      auto ks = p.getKeys(); in.keyIds.reserve(ks.size());
-      for (auto k : ks) in.keyIds.push_back(store_.getOrCreatePropKeyId(stardust::GetOrCreatePropKeyIdParams{std::string(k.cStr()), false}));
+      auto ks = p.getKeys();
+      in.keyIds.reserve(ks.size());
+      for (auto k : ks)
+        in.keyIds.push_back(store_.getOrCreatePropKeyId(stardust::GetOrCreatePropKeyIdParams{std::string(k.cStr()), false}));
     }
     auto resv = store_.getEdgeProps(in);
-    auto res = ctx.getResults(); auto out = res.initResult();
+    auto res = ctx.getResults();
+    auto out = res.initResult();
     auto props = out.initProps(resv.props.size());
-    for (uint32_t i = 0; i < resv.props.size(); ++i) toRpcProperty(props[i], resv.props[i], store_);
+    for (uint32_t i = 0; i < resv.props.size(); ++i)
+      toRpcProperty(props[i], resv.props[i], store_);
     return kj::READY_NOW;
   }
 
   kj::Promise<void> StardustImpl::scanNodesByLabel(ScanNodesByLabelContext ctx)
   {
     auto p = ctx.getParams();
-    stardust::ScanNodesByLabelParams in{}; in.labelId = store_.getOrCreateLabelId(stardust::GetOrCreateLabelIdParams{std::string(p.getLabel().cStr()), false}); in.limit = p.getLimit();
+    stardust::ScanNodesByLabelParams in{};
+    in.labelId = store_.getOrCreateLabelId(stardust::GetOrCreateLabelIdParams{std::string(p.getLabel().cStr()), false});
+    in.limit = p.getLimit();
     auto resv = store_.scanNodesByLabel(in);
-    auto res = ctx.getResults(); auto out = res.initResult();
-    auto ids = out.initNodeIds(resv.nodeIds.size()); for (uint32_t i = 0; i < resv.nodeIds.size(); ++i) ids.set(i, resv.nodeIds[i]);
+    auto res = ctx.getResults();
+    auto out = res.initResult();
+    auto ids = out.initNodeIds(resv.nodeIds.size());
+    for (uint32_t i = 0; i < resv.nodeIds.size(); ++i)
+      ids.set(i, resv.nodeIds[i]);
     return kj::READY_NOW;
   }
 
   kj::Promise<void> StardustImpl::degree(DegreeContext ctx)
   {
     auto p = ctx.getParams();
-    stardust::DegreeParams in{}; in.node = p.getNode(); in.direction = fromRpcDirection(p.getDirection());
+    stardust::DegreeParams in{};
+    in.node = p.getNode();
+    in.direction = fromRpcDirection(p.getDirection());
     auto resv = store_.degree(in);
-    auto res = ctx.getResults(); auto out = res.initResult(); out.setCount(resv.count);
+    auto res = ctx.getResults();
+    auto out = res.initResult();
+    out.setCount(resv.count);
     return kj::READY_NOW;
   }
 
@@ -459,7 +496,7 @@ namespace stardust::rpc
         for (auto pr : r.getColdProps())
           in.coldProps.push_back(fromRpcProperty(pr, store_, true));
         for (auto tv : r.getVectors())
-          // TODO: check if tag exists, 
+          // TODO: check if tag exists,
           in.vectors.push_back(fromRpcTaggedVector(tv, store_, true));
         (void)store_.createNode(in);
         break;

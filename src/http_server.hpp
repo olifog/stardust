@@ -15,5 +15,3 @@ namespace stardust::http
   void startHttpServer(stardust::Store &store, const std::string &bind);
 
 } // namespace stardust::http
-
- 

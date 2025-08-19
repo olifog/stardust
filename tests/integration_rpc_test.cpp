@@ -308,7 +308,8 @@ TEST_F(IntegrationRpc, Step07_GetNodeAHeaderAndProps)
       auto lnames = hdr.getLabels().getNames();
 
       bool hasA = false, hasC = false;
-      for (auto v : lnames) {
+      for (auto v : lnames)
+      {
         if (strcmp(v.cStr(), "nodelabel-a") == 0)
           hasA = true;
         if (strcmp(v.cStr(), "nodelabel-c") == 0)
@@ -322,7 +323,8 @@ TEST_F(IntegrationRpc, Step07_GetNodeAHeaderAndProps)
     {
       auto hp = hdr.getHotProps();
       bool hasA = false, hasB = false;
-      for (auto p : hp) {
+      for (auto p : hp)
+      {
         if (strcmp(p.getKey().cStr(), "hotprop-a") == 0)
           hasA = true;
         if (strcmp(p.getKey().cStr(), "hotprop-b") == 0)
@@ -354,7 +356,8 @@ TEST_F(IntegrationRpc, Step07_GetNodeAHeaderAndProps)
         hasA = true;
         auto val = p.getVal();
         EXPECT_EQ(val.which(), stardust::rpc::Value::F64);
-        if (val.which() == stardust::rpc::Value::F64) hotAF64Ok = (val.getF64() == 3.14);
+        if (val.which() == stardust::rpc::Value::F64)
+          hotAF64Ok = (val.getF64() == 3.14);
       }
       else if (strcmp(key, "hotprop-b") == 0)
         hasB = true;
@@ -371,7 +374,8 @@ TEST_F(IntegrationRpc, Step07_GetNodeAHeaderAndProps)
         hasColdC = true;
         auto val = p.getVal();
         EXPECT_EQ(val.which(), stardust::rpc::Value::BOOLV);
-        if (val.which() == stardust::rpc::Value::BOOLV) hotCBoolOk = (val.getBoolv() == false);
+        if (val.which() == stardust::rpc::Value::BOOLV)
+          hotCBoolOk = (val.getBoolv() == false);
       }
       else if (strcmp(key, "bin-prop") == 0)
       {
@@ -482,7 +486,6 @@ TEST_F(IntegrationRpc, Step09_VectorsOnB_AddGetDelete)
 
   up.send().wait(ws);
 
-
   {
     auto gv = cap.getVectorsRequest();
     auto gp = gv.initParams();
@@ -573,10 +576,13 @@ TEST_F(IntegrationRpc, Step10_AddSecondEdgeAtoB_AndFilters)
 
     bool found = false;
     size_t count = 0;
-    for (auto row : items) {
-      if (strcmp(row.getType().cStr(), "edgetype-b") == 0) {
+    for (auto row : items)
+    {
+      if (strcmp(row.getType().cStr(), "edgetype-b") == 0)
+      {
         ++count;
-        if (row.getNeighbor() == idB) found = true;
+        if (row.getNeighbor() == idB)
+          found = true;
       }
     }
     EXPECT_EQ(count, 1u);
@@ -594,10 +600,13 @@ TEST_F(IntegrationRpc, Step10_AddSecondEdgeAtoB_AndFilters)
 
     bool found = false;
     size_t count = 0;
-    for (auto row : items) {
-      if (strcmp(row.getType().cStr(), "edgetype-a") == 0) {
+    for (auto row : items)
+    {
+      if (strcmp(row.getType().cStr(), "edgetype-a") == 0)
+      {
         ++count;
-        if (row.getNeighbor() == idB) found = true;
+        if (row.getNeighbor() == idB)
+          found = true;
       }
     }
     EXPECT_EQ(count, 1u);
@@ -616,20 +625,25 @@ TEST_F(IntegrationRpc, Step10_AddSecondEdgeAtoB_AndFilters)
     auto items = resp.getResult().getItems();
 
     bool found = false;
-    for (auto row : items) {
-      if (row.getNeighbor() == idB) {
+    for (auto row : items)
+    {
+      if (row.getNeighbor() == idB)
+      {
         // verify neighbor has label "nodelabel-b"
         auto gn = cap.getNodeRequest();
         gn.initParams().setId(row.getNeighbor());
         auto r = gn.send().wait(ws);
         auto lnames = r.getResult().getHeader().getLabels().getNames();
         bool hasLabel = false;
-        for (uint32_t i = 0; i < lnames.size(); ++i) {
-          if (strcmp(lnames[i].cStr(), "nodelabel-b") == 0) {
+        for (uint32_t i = 0; i < lnames.size(); ++i)
+        {
+          if (strcmp(lnames[i].cStr(), "nodelabel-b") == 0)
+          {
             hasLabel = true;
           }
         }
-        if (hasLabel) found = true;
+        if (hasLabel)
+          found = true;
       }
     }
     EXPECT_TRUE(found);
@@ -872,12 +886,12 @@ TEST_F(IntegrationRpc, Step18_CreateNodesWithVectorsForKnn)
 
   // 5 nodes with vectors of dimension 4 and tag "knn-test"
   std::vector<uint64_t> nodeIds;
-  
+
   // node 1: [1.0, 0.0, 0.0, 0.0] - unit vector in first dimension
   {
     auto req = cap.createNodeRequest();
     auto p = req.initParams();
-    
+
     std::vector<float> v = {1.0f, 0.0f, 0.0f, 0.0f};
     auto vecs = p.initVectors(1);
     auto tv = vecs[0];
@@ -886,16 +900,16 @@ TEST_F(IntegrationRpc, Step18_CreateNodesWithVectorsForKnn)
     vec.setDim(4);
     capnp::Data::Builder data = vec.initData(v.size() * 4);
     std::memcpy(data.begin(), v.data(), v.size() * 4);
-    
+
     auto resp = req.send().wait(ws);
     nodeIds.push_back(resp.getResult().getNode().getId());
   }
-  
+
   // node 2: [0.0, 1.0, 0.0, 0.0] - unit vector in second dimension
   {
     auto req = cap.createNodeRequest();
     auto p = req.initParams();
-    
+
     std::vector<float> v = {0.0f, 1.0f, 0.0f, 0.0f};
     auto vecs = p.initVectors(1);
     auto tv = vecs[0];
@@ -904,16 +918,16 @@ TEST_F(IntegrationRpc, Step18_CreateNodesWithVectorsForKnn)
     vec.setDim(4);
     capnp::Data::Builder data = vec.initData(v.size() * 4);
     std::memcpy(data.begin(), v.data(), v.size() * 4);
-    
+
     auto resp = req.send().wait(ws);
     nodeIds.push_back(resp.getResult().getNode().getId());
   }
-  
+
   // node 3: [0.7071, 0.7071, 0.0, 0.0] - 45 degrees between first two dimensions
   {
     auto req = cap.createNodeRequest();
     auto p = req.initParams();
-    
+
     std::vector<float> v = {0.7071f, 0.7071f, 0.0f, 0.0f};
     auto vecs = p.initVectors(1);
     auto tv = vecs[0];
@@ -922,16 +936,16 @@ TEST_F(IntegrationRpc, Step18_CreateNodesWithVectorsForKnn)
     vec.setDim(4);
     capnp::Data::Builder data = vec.initData(v.size() * 4);
     std::memcpy(data.begin(), v.data(), v.size() * 4);
-    
+
     auto resp = req.send().wait(ws);
     nodeIds.push_back(resp.getResult().getNode().getId());
   }
-  
+
   // node 4: [0.5, 0.5, 0.5, 0.5] - equal in all dimensions
   {
     auto req = cap.createNodeRequest();
     auto p = req.initParams();
-    
+
     std::vector<float> v = {0.5f, 0.5f, 0.5f, 0.5f};
     auto vecs = p.initVectors(1);
     auto tv = vecs[0];
@@ -940,16 +954,16 @@ TEST_F(IntegrationRpc, Step18_CreateNodesWithVectorsForKnn)
     vec.setDim(4);
     capnp::Data::Builder data = vec.initData(v.size() * 4);
     std::memcpy(data.begin(), v.data(), v.size() * 4);
-    
+
     auto resp = req.send().wait(ws);
     nodeIds.push_back(resp.getResult().getNode().getId());
   }
-  
+
   // node 5: [-1.0, 0.0, 0.0, 0.0] - opposite of node 1
   {
     auto req = cap.createNodeRequest();
     auto p = req.initParams();
-    
+
     std::vector<float> v = {-1.0f, 0.0f, 0.0f, 0.0f};
     auto vecs = p.initVectors(1);
     auto tv = vecs[0];
@@ -958,13 +972,14 @@ TEST_F(IntegrationRpc, Step18_CreateNodesWithVectorsForKnn)
     vec.setDim(4);
     capnp::Data::Builder data = vec.initData(v.size() * 4);
     std::memcpy(data.begin(), v.data(), v.size() * 4);
-    
+
     auto resp = req.send().wait(ws);
     nodeIds.push_back(resp.getResult().getNode().getId());
   }
-  
+
   EXPECT_EQ(nodeIds.size(), 5u);
-  for (auto id : nodeIds) {
+  for (auto id : nodeIds)
+  {
     EXPECT_GT(id, 0u);
   }
 }
@@ -973,125 +988,128 @@ TEST_F(IntegrationRpc, Step19_KnnQueries)
 {
   auto &ws = client->getWaitScope();
   auto cap = client->getMain<stardust::rpc::Stardust>();
-  
+
   // test 1: Query with [1.0, 0.0, 0.0, 0.0], k=3
   // Should find node 1 as exact match (score ~1.0), then node 3 (has 0.7071 in first dim)
   {
     auto knn = cap.knnRequest();
     auto kp = knn.initParams();
     kp.setTag("knn-test");
-    
+
     std::vector<float> q = {1.0f, 0.0f, 0.0f, 0.0f};
     auto vec = kp.initQuery();
     vec.setDim(4);
     capnp::Data::Builder data = vec.initData(q.size() * 4);
     std::memcpy(data.begin(), q.data(), q.size() * 4);
     kp.setK(5);
-    
+
     auto resp = knn.send().wait(ws);
     auto hits = resp.getResult().getHits();
-    
+
     ASSERT_EQ(hits.size(), 5u);
-    
+
     EXPECT_NEAR(hits[0].getScore(), 1.0f, 0.0001f);
-    
-    for (size_t i = 1; i < hits.size(); ++i) {
-      EXPECT_LE(hits[i].getScore(), hits[i-1].getScore());
+
+    for (size_t i = 1; i < hits.size(); ++i)
+    {
+      EXPECT_LE(hits[i].getScore(), hits[i - 1].getScore());
     }
-    
+
     // last result should be the opposite vector with score -1.0
     EXPECT_NEAR(hits[4].getScore(), -1.0f, 0.0001f);
   }
-  
+
   // test 2: Query with [0.0, 1.0, 0.0, 0.0], k=2
   // Should find node 2 as exact match, then node 3
   {
     auto knn = cap.knnRequest();
     auto kp = knn.initParams();
     kp.setTag("knn-test");
-    
+
     std::vector<float> q = {0.0f, 1.0f, 0.0f, 0.0f};
     auto vec = kp.initQuery();
     vec.setDim(4);
     capnp::Data::Builder data = vec.initData(q.size() * 4);
     std::memcpy(data.begin(), q.data(), q.size() * 4);
     kp.setK(2);
-    
+
     auto resp = knn.send().wait(ws);
     auto hits = resp.getResult().getHits();
-    
+
     ASSERT_EQ(hits.size(), 2u);
-    
+
     EXPECT_NEAR(hits[0].getScore(), 1.0f, 0.0001f);
     EXPECT_NEAR(hits[1].getScore(), 0.7071f, 0.01f);
   }
-  
+
   // test 3: Query with [0.25, 0.25, 0.25, 0.25]
   {
     auto knn = cap.knnRequest();
     auto kp = knn.initParams();
     kp.setTag("knn-test");
-    
+
     std::vector<float> q = {0.25f, 0.25f, 0.25f, 0.25f};
     auto vec = kp.initQuery();
     vec.setDim(4);
     capnp::Data::Builder data = vec.initData(q.size() * 4);
     std::memcpy(data.begin(), q.data(), q.size() * 4);
     kp.setK(5);
-    
+
     auto resp = knn.send().wait(ws);
     auto hits = resp.getResult().getHits();
-    
+
     ASSERT_EQ(hits.size(), 5u);
-    
+
     EXPECT_NEAR(hits[0].getScore(), 1.0f, 0.0001f);
-    
-    for (size_t i = 1; i < hits.size(); ++i) {
-      EXPECT_LE(hits[i].getScore(), hits[i-1].getScore());
+
+    for (size_t i = 1; i < hits.size(); ++i)
+    {
+      EXPECT_LE(hits[i].getScore(), hits[i - 1].getScore());
     }
   }
-  
+
   // test 4: Query with zero vector [0, 0, 0, 0], k=3
   // with zero query vector, all scores should be 0 (as per the implementation)
   {
     auto knn = cap.knnRequest();
     auto kp = knn.initParams();
     kp.setTag("knn-test");
-    
+
     std::vector<float> q = {0.0f, 0.0f, 0.0f, 0.0f};
     auto vec = kp.initQuery();
     vec.setDim(4);
     capnp::Data::Builder data = vec.initData(q.size() * 4);
     std::memcpy(data.begin(), q.data(), q.size() * 4);
     kp.setK(3);
-    
+
     auto resp = knn.send().wait(ws);
     auto hits = resp.getResult().getHits();
-    
+
     ASSERT_EQ(hits.size(), 3u);
-    
-    for (const auto& hit : hits) {
+
+    for (const auto &hit : hits)
+    {
       EXPECT_NEAR(hit.getScore(), 0.0f, 0.0001f);
     }
   }
-  
+
   // test 5: Query with k=0
   // should return empty results
   {
     auto knn = cap.knnRequest();
     auto kp = knn.initParams();
     kp.setTag("knn-test");
-    
+
     std::vector<float> q = {1.0f, 0.0f, 0.0f, 0.0f};
     auto vec = kp.initQuery();
     vec.setDim(4);
     capnp::Data::Builder data = vec.initData(q.size() * 4);
     std::memcpy(data.begin(), q.data(), q.size() * 4);
     kp.setK(0);
-    
+
     auto resp = knn.send().wait(ws);
     auto hits = resp.getResult().getHits();
-    
+
     EXPECT_EQ(hits.size(), 0u);
   }
 }
