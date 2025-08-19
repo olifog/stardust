@@ -9,7 +9,26 @@ namespace stardust::rpc
   namespace
   {
 
-    stardust::Value fromRpcValue(Value::Reader v)
+    bool isValidUtf8(const char *data, size_t size)
+    {
+      const unsigned char *s = reinterpret_cast<const unsigned char *>(data);
+      const unsigned char *e = s + size;
+      while (s < e)
+      {
+        unsigned char c = *s++;
+        if (c < 0x80) continue;
+        unsigned int extra = (c >= 0xF0) ? 3 : (c >= 0xE0) ? 2 : (c >= 0xC0) ? 1 : 0xFF;
+        if (extra == 0xFF || s + extra > e) return false;
+        for (unsigned int i = 0; i < extra; ++i)
+        {
+          if ((s[i] & 0xC0) != 0x80) return false;
+        }
+        s += extra;
+      }
+      return true;
+    }
+
+    stardust::Value fromRpcValue(Value::Reader v, stardust::Store &store, bool createIfMissing)
     {
       switch (v.which())
       {
@@ -19,12 +38,25 @@ namespace stardust::rpc
         return static_cast<double>(v.getF64());
       case Value::BOOLV:
         return static_cast<bool>(v.getBoolv());
-      case Value::TEXT_ID:
-        return static_cast<uint32_t>(v.getTextId());
+      case Value::TEXT:
+      {
+        auto t = v.getText();
+        std::string s(t.cStr());
+        uint32_t id = store.getOrCreateTextId(s, createIfMissing);
+        return id;
+      }
       case Value::BYTES:
       {
         auto d = v.getBytes();
-        return std::string(reinterpret_cast<const char *>(d.begin()), d.size());
+        const char *ptr = reinterpret_cast<const char *>(d.begin());
+        size_t len = d.size();
+        if (isValidUtf8(ptr, len))
+        {
+          std::string s(ptr, len);
+          uint32_t id = store.getOrCreateTextId(s, createIfMissing);
+          return id;
+        }
+        return std::string(ptr, len);
       }
       case Value::NULLV:
       default:
@@ -32,7 +64,7 @@ namespace stardust::rpc
       }
     }
 
-    void toRpcValue(Value::Builder b, const stardust::Value &v)
+    void toRpcValue(Value::Builder b, const stardust::Value &v, stardust::Store &store)
     {
       if (std::holds_alternative<int64_t>(v))
       {
@@ -51,7 +83,9 @@ namespace stardust::rpc
       }
       if (std::holds_alternative<uint32_t>(v))
       {
-        b.setTextId(std::get<uint32_t>(v));
+        auto id = std::get<uint32_t>(v);
+        auto s = store.getTextName(id);
+        b.setText(s);
         return;
       }
       if (std::holds_alternative<std::string>(v))
@@ -68,7 +102,7 @@ namespace stardust::rpc
       stardust::Property out{};
       auto name = p.getKey();
       out.keyId = store.getOrCreatePropKeyId(stardust::GetOrCreatePropKeyIdParams{std::string(name.cStr()), createIfMissing});
-      out.val = fromRpcValue(p.getVal());
+      out.val = fromRpcValue(p.getVal(), store, createIfMissing);
       return out;
     }
 
@@ -76,7 +110,7 @@ namespace stardust::rpc
     {
       auto keyName = store.getPropKeyName(p.keyId);
       b.setKey(keyName);
-      toRpcValue(b.initVal(), p.val);
+      toRpcValue(b.initVal(), p.val, store);
     }
 
     stardust::LabelSet fromRpcLabelSet(LabelSet::Reader ls, stardust::Store &store, bool createIfMissing)
@@ -154,9 +188,9 @@ namespace stardust::rpc
 
   } // namespace
 
-  GraphDbImpl::GraphDbImpl(stardust::Store &s) : store_(s) {}
+  StardustImpl::StardustImpl(stardust::Store &s) : store_(s) {}
 
-  kj::Promise<void> GraphDbImpl::createNode(CreateNodeContext ctx)
+  kj::Promise<void> StardustImpl::createNode(CreateNodeContext ctx)
   {
     auto p = ctx.getParams();
     auto params = p.getParams();
@@ -191,7 +225,7 @@ namespace stardust::rpc
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> GraphDbImpl::upsertNodeProps(UpsertNodePropsContext ctx)
+  kj::Promise<void> StardustImpl::upsertNodeProps(UpsertNodePropsContext ctx)
   {
     auto p = ctx.getParams();
     auto params = p.getParams();
@@ -219,7 +253,7 @@ namespace stardust::rpc
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> GraphDbImpl::setNodeLabels(SetNodeLabelsContext ctx)
+  kj::Promise<void> StardustImpl::setNodeLabels(SetNodeLabelsContext ctx)
   {
     auto p = ctx.getParams();
     auto params = p.getParams();
@@ -241,7 +275,7 @@ namespace stardust::rpc
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> GraphDbImpl::upsertVector(UpsertVectorContext ctx)
+  kj::Promise<void> StardustImpl::upsertVector(UpsertVectorContext ctx)
   {
     auto p = ctx.getParams();
     auto params = p.getParams();
@@ -258,7 +292,7 @@ namespace stardust::rpc
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> GraphDbImpl::deleteVector(DeleteVectorContext ctx)
+  kj::Promise<void> StardustImpl::deleteVector(DeleteVectorContext ctx)
   {
     auto p = ctx.getParams();
     auto params = p.getParams();
@@ -269,7 +303,7 @@ namespace stardust::rpc
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> GraphDbImpl::addEdge(AddEdgeContext ctx)
+  kj::Promise<void> StardustImpl::addEdge(AddEdgeContext ctx)
   {
     auto p = ctx.getParams();
     auto params = p.getParams();
@@ -295,7 +329,7 @@ namespace stardust::rpc
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> GraphDbImpl::updateEdgeProps(UpdateEdgePropsContext ctx)
+  kj::Promise<void> StardustImpl::updateEdgeProps(UpdateEdgePropsContext ctx)
   {
     auto p = ctx.getParams();
     auto params = p.getParams();
@@ -317,33 +351,74 @@ namespace stardust::rpc
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> GraphDbImpl::neighbors(NeighborsContext ctx)
+  kj::Promise<void> StardustImpl::listAdjacency(ListAdjacencyContext ctx)
   {
-    auto p = ctx.getParams();
-    auto params = p.getParams();
-    stardust::NeighborsParams in{};
-    in.node = params.getNode();
-    in.direction = fromRpcDirection(params.getDirection());
-    in.limit = params.getLimit();
+    auto p = ctx.getParams(); auto params = p.getParams();
+    stardust::ListAdjacencyParams in{}; in.node = params.getNode(); in.direction = fromRpcDirection(params.getDirection()); in.limit = params.getLimit();
+    auto adj = store_.listAdjacency(in);
+    auto res = ctx.getResults(); auto out = res.initResult();
+    auto items = out.initItems(adj.items.size());
+    for (uint32_t i = 0; i < adj.items.size(); ++i)
     {
-      auto rn = params.getRelTypeIn();
-      in.relTypeIn.reserve(rn.size());
-      for (auto nm : rn)
-        in.relTypeIn.push_back(store_.getOrCreateRelTypeId(stardust::GetOrCreateRelTypeIdParams{std::string(nm.cStr()), false}));
+      const auto &a = adj.items[i]; auto row = items[i];
+      row.setNeighbor(a.neighborId);
+      row.setEdgeId(a.edgeId);
+      row.setType(store_.getRelTypeName(a.typeId));
+      switch (a.direction)
+      {
+        case stardust::Direction::Out: row.setDirection(Direction::OUT); break;
+        case stardust::Direction::In:  row.setDirection(Direction::IN);  break;
+        case stardust::Direction::Both: row.setDirection(Direction::BOTH); break;
+      }
     }
-    in.neighborHas = fromRpcLabelSet(params.getNeighborHas(), store_, false);
-
-    auto resv = store_.neighbors(in);
-
-    auto res = ctx.getResults();
-    auto out = res.initResult();
-    auto list = out.initNeighbors(resv.neighbors.size());
-    for (uint32_t i = 0; i < resv.neighbors.size(); ++i)
-      list.set(i, resv.neighbors[i]);
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> GraphDbImpl::knn(KnnContext ctx)
+  kj::Promise<void> StardustImpl::getEdgeHeader(GetEdgeHeaderContext ctx)
+  {
+    auto p = ctx.getParams(); auto params = p.getParams();
+    stardust::GetEdgeParams in{}; in.edgeId = params.getEdgeId();
+    auto r = store_.getEdgeHeader(in);
+    auto res = ctx.getResults(); auto out = res.initResult();
+    out.setId(r.ref.id); out.setSrc(r.ref.src); out.setDst(r.ref.dst); out.setType(store_.getRelTypeName(r.typeId));
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> StardustImpl::getEdgeProps(GetEdgePropsContext ctx)
+  {
+    auto p = ctx.getParams();
+    stardust::GetEdgePropsParams in{}; in.edgeId = p.getEdgeId();
+    {
+      auto ks = p.getKeys(); in.keyIds.reserve(ks.size());
+      for (auto k : ks) in.keyIds.push_back(store_.getOrCreatePropKeyId(stardust::GetOrCreatePropKeyIdParams{std::string(k.cStr()), false}));
+    }
+    auto resv = store_.getEdgeProps(in);
+    auto res = ctx.getResults(); auto out = res.initResult();
+    auto props = out.initProps(resv.props.size());
+    for (uint32_t i = 0; i < resv.props.size(); ++i) toRpcProperty(props[i], resv.props[i], store_);
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> StardustImpl::scanNodesByLabel(ScanNodesByLabelContext ctx)
+  {
+    auto p = ctx.getParams();
+    stardust::ScanNodesByLabelParams in{}; in.labelId = store_.getOrCreateLabelId(stardust::GetOrCreateLabelIdParams{std::string(p.getLabel().cStr()), false}); in.limit = p.getLimit();
+    auto resv = store_.scanNodesByLabel(in);
+    auto res = ctx.getResults(); auto out = res.initResult();
+    auto ids = out.initNodeIds(resv.nodeIds.size()); for (uint32_t i = 0; i < resv.nodeIds.size(); ++i) ids.set(i, resv.nodeIds[i]);
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> StardustImpl::degree(DegreeContext ctx)
+  {
+    auto p = ctx.getParams();
+    stardust::DegreeParams in{}; in.node = p.getNode(); in.direction = fromRpcDirection(p.getDirection());
+    auto resv = store_.degree(in);
+    auto res = ctx.getResults(); auto out = res.initResult(); out.setCount(resv.count);
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> StardustImpl::knn(KnnContext ctx)
   {
     auto p = ctx.getParams();
     auto params = p.getParams();
@@ -365,7 +440,7 @@ namespace stardust::rpc
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> GraphDbImpl::writeBatch(WriteBatchContext ctx)
+  kj::Promise<void> StardustImpl::writeBatch(WriteBatchContext ctx)
   {
     auto p = ctx.getParams();
     auto batch = p.getBatch();
@@ -470,7 +545,7 @@ namespace stardust::rpc
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> GraphDbImpl::getNode(GetNodeContext ctx)
+  kj::Promise<void> StardustImpl::getNode(GetNodeContext ctx)
   {
     auto p = ctx.getParams();
     auto params = p.getParams();
@@ -483,7 +558,7 @@ namespace stardust::rpc
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> GraphDbImpl::getNodeProps(GetNodePropsContext ctx)
+  kj::Promise<void> StardustImpl::getNodeProps(GetNodePropsContext ctx)
   {
     auto p = ctx.getParams();
     auto params = p.getParams();
@@ -504,7 +579,7 @@ namespace stardust::rpc
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> GraphDbImpl::getVectors(GetVectorsContext ctx)
+  kj::Promise<void> StardustImpl::getVectors(GetVectorsContext ctx)
   {
     auto p = ctx.getParams();
     auto params = p.getParams();
@@ -525,7 +600,7 @@ namespace stardust::rpc
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> GraphDbImpl::getEdge(GetEdgeContext ctx)
+  kj::Promise<void> StardustImpl::getEdge(GetEdgeContext ctx)
   {
     auto p = ctx.getParams();
     auto params = p.getParams();
@@ -540,7 +615,7 @@ namespace stardust::rpc
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> GraphDbImpl::deleteNode(DeleteNodeContext ctx)
+  kj::Promise<void> StardustImpl::deleteNode(DeleteNodeContext ctx)
   {
     auto p = ctx.getParams();
     auto params = p.getParams();
@@ -550,7 +625,7 @@ namespace stardust::rpc
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> GraphDbImpl::deleteEdge(DeleteEdgeContext ctx)
+  kj::Promise<void> StardustImpl::deleteEdge(DeleteEdgeContext ctx)
   {
     auto p = ctx.getParams();
     auto params = p.getParams();

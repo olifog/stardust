@@ -4,9 +4,9 @@ import ForceGraph3D, {
   type NodeObject,
 } from "react-force-graph-3d";
 import { NodeDetails } from "./node-details";
-import { getNodeWithNeighbours } from "./stardust";
-import type { Edge, NodeHeader } from "./stardust";
 import { NodeSearch } from "./node-search";
+import type { Edge, NodeHeader } from "./stardust";
+import { getNodeWithNeighbours } from "./stardust";
 
 // interface Node {
 // 	id: string;
@@ -26,27 +26,29 @@ export const GraphViewer = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selectedNode, setSelectedNode] = useState<NodeObject | null>(null);
 
-	const [nodes, setNodes] = useState<Record<string, NodeHeader>>({});
-	const [edges, setEdges] = useState<Record<string, Edge>>({});
+  const [nodes, setNodes] = useState<Record<string, NodeHeader>>({});
+  const [edges, setEdges] = useState<Record<string, Edge>>({});
 
-	const graphData = useMemo(() => {
-		return {
-			nodes: Object.values(nodes).map((node) => ({
-				id: node.id.toString(),
-				name: node.id.toString(),
-				val: 1,
-			})),
-			links: Object.values(edges).map((edge) => ({
-				source: edge.src.toString(),
-				target: edge.dst.toString(),
-			})),
-		};
-	}, [nodes, edges]);
+  const graphData = useMemo(() => {
+    return {
+      nodes: Object.values(nodes).map((node) => ({
+        id: node.id.toString(),
+        name: node.id.toString(),
+        val: 1,
+      })),
+      links: Object.values(edges).map((edge) => ({
+        source: edge.src.toString(),
+        target: edge.dst.toString(),
+      })),
+    };
+  }, [nodes, edges]);
 
   const [width, setWidth] = useState(0);
   const [height, setHeight] = useState(0);
   const [pendingFocusId, setPendingFocusId] = useState<number | null>(null);
-  const nodeCoordsRef = useRef<Record<string, { x: number; y: number; z: number }>>({});
+  const nodeCoordsRef = useRef<
+    Record<string, { x: number; y: number; z: number }>
+  >({});
 
   useEffect(() => {
     const element = containerRef.current;
@@ -74,12 +76,52 @@ export const GraphViewer = () => {
     return () => window.removeEventListener("resize", onWindowResize);
   }, []);
 
+  const addNodeAndNeighbours = useCallback(
+    async (id: number): Promise<NodeHeader | undefined> => {
+      try {
+        const {
+          node,
+          neighbourHeaders,
+          edges: neighbourEdges,
+        } = await getNodeWithNeighbours(id, { direction: "both", limit: 64 });
+
+        setNodes((prev) => {
+          const next: Record<string, NodeHeader> = { ...prev };
+          next[node.id.toString()] = node;
+          for (const nh of neighbourHeaders) {
+            next[nh.id.toString()] = nh;
+          }
+          return next;
+        });
+
+        setEdges((prev) => {
+          const next: Record<string, Edge> = { ...prev };
+          for (const e of neighbourEdges) {
+            const key = `${e.src}-${e.dst}`;
+            next[key] = e;
+          }
+          return next;
+        });
+
+        return node;
+      } catch (err) {
+        console.error("Failed to load node/neighbours", err);
+      }
+    },
+    [],
+  );
+
   const handleNodeClick = useCallback(
     async (input: NodeObject | number) => {
       const id = typeof input === "number" ? input : Number(input.id);
       await addNodeAndNeighbours(id);
       setSelectedNode({ id: id.toString() } as NodeObject);
-      if (typeof input !== "number" && input.x != null && input.y != null && input.z != null) {
+      if (
+        typeof input !== "number" &&
+        input.x != null &&
+        input.y != null &&
+        input.z != null
+      ) {
         const x = input.x;
         const y = input.y;
         const z = input.z;
@@ -88,42 +130,14 @@ export const GraphViewer = () => {
         fgRef.current?.cameraPosition(
           { x: x * distRatio, y: y * distRatio, z: z * distRatio },
           { x, y, z },
-          1000
+          1000,
         );
       } else {
         setPendingFocusId(id);
       }
     },
-    [fgRef]
+    [addNodeAndNeighbours],
   );
-
-  const addNodeAndNeighbours = useCallback(async (id: number): Promise<NodeHeader | undefined> => {
-    try {
-      const { node, neighbourHeaders, edges: neighbourEdges } = await getNodeWithNeighbours(id, { direction: "both", limit: 64 });
-
-      setNodes((prev) => {
-        const next: Record<string, NodeHeader> = { ...prev };
-        next[node.id.toString()] = node;
-        for (const nh of neighbourHeaders) {
-          next[nh.id.toString()] = nh;
-        }
-        return next;
-      });
-
-      setEdges((prev) => {
-        const next: Record<string, Edge> = { ...prev };
-        for (const e of neighbourEdges) {
-          const key = `${e.src}-${e.dst}`;
-          next[key] = e;
-        }
-        return next;
-      });
-
-      return node;
-    } catch (err) {
-      console.error("Failed to load node/neighbours", err);
-    }
-  }, []);
 
   useEffect(() => {
     if (pendingFocusId == null) return;
@@ -140,7 +154,7 @@ export const GraphViewer = () => {
         fgRef.current?.cameraPosition(
           { x: x * distRatio, y: y * distRatio, z: z * distRatio },
           { x, y, z },
-          1000
+          1000,
         );
         setPendingFocusId(null);
         return;

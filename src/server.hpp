@@ -7,10 +7,10 @@
 namespace stardust::rpc
 {
 
-  class GraphDbImpl final : public GraphDb::Server
+  class StardustImpl final : public Stardust::Server
   {
   public:
-    explicit GraphDbImpl(stardust::Store &s);
+    explicit StardustImpl(stardust::Store &s);
 
     kj::Promise<void> createNode(CreateNodeContext ctx) override;
     kj::Promise<void> upsertNodeProps(UpsertNodePropsContext ctx) override;
@@ -19,7 +19,11 @@ namespace stardust::rpc
     kj::Promise<void> deleteVector(DeleteVectorContext ctx) override;
     kj::Promise<void> addEdge(AddEdgeContext ctx) override;
     kj::Promise<void> updateEdgeProps(UpdateEdgePropsContext ctx) override;
-    kj::Promise<void> neighbors(NeighborsContext ctx) override;
+    kj::Promise<void> listAdjacency(ListAdjacencyContext ctx) override;
+    kj::Promise<void> getEdgeHeader(GetEdgeHeaderContext ctx) override;
+    kj::Promise<void> getEdgeProps(GetEdgePropsContext ctx) override;
+    kj::Promise<void> scanNodesByLabel(ScanNodesByLabelContext ctx) override;
+    kj::Promise<void> degree(DegreeContext ctx) override;
     kj::Promise<void> knn(KnnContext ctx) override;
     kj::Promise<void> writeBatch(WriteBatchContext ctx) override;
 

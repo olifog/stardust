@@ -63,6 +63,8 @@ namespace stardust
     DbHandle vecTagIds() const;
     DbHandle vecTagsByName() const;
     DbHandle vecTagMeta() const;
+    DbHandle textIds() const;
+    DbHandle textsByName() const;
 
     DbHandle meta() const;
     DbHandle labelIndex() const;
@@ -89,6 +91,8 @@ namespace stardust
     DbHandle vecTagIds_{};
     DbHandle vecTagsByName_{};
     DbHandle vecTagMeta_{};
+    DbHandle textIds_{};
+    DbHandle textsByName_{};
 
     DbHandle meta_{};
     DbHandle labelIndex_{};

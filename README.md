@@ -65,9 +65,9 @@ endpoints:
 - [X] way more tests, make sure things are working properly
   - [ ] test with real embedding model
 - [X] implement interning of various strings properly (label names, property key names, types, etc.)
-- [ ] intern text props
-- [ ] expand out the API, more CRUD + query filters etc.
-- [ ] add in http server alternative to capnproto
+- [X] intern text props
+- [X] expand out the API, more CRUD + query filters etc.
+- [X] add in http server alternative to capnproto
 - [ ] make example graph rag application
 - [ ] hnsw index for vector search
 - [ ] expose http api as (read only) mcp server

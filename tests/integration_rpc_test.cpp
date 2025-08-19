@@ -55,7 +55,7 @@ namespace
           ::unlink(path);
         }
 
-        capnp::EzRpcServer server(kj::heap<stardust::rpc::GraphDbImpl>(store), bindC);
+        capnp::EzRpcServer server(kj::heap<stardust::rpc::StardustImpl>(store), bindC);
         auto& waitScope = server.getWaitScope();
         kj::NEVER_DONE.wait(waitScope);
       } catch (...) {
@@ -120,7 +120,7 @@ uint64_t IntegrationRpc::edge2 = 0;
 TEST_F(IntegrationRpc, Step01_CreateNodeA)
 {
   auto &ws = client->getWaitScope();
-  auto cap = client->getMain<stardust::rpc::GraphDb>();
+  auto cap = client->getMain<stardust::rpc::Stardust>();
 
   auto req = cap.createNodeRequest();
   auto p = req.initParams();
@@ -169,7 +169,7 @@ TEST_F(IntegrationRpc, Step01_CreateNodeA)
 TEST_F(IntegrationRpc, Step02_CreateNodeB)
 {
   auto &ws = client->getWaitScope();
-  auto cap = client->getMain<stardust::rpc::GraphDb>();
+  auto cap = client->getMain<stardust::rpc::Stardust>();
   auto req = cap.createNodeRequest();
 
   auto resp = req.send().wait(ws);
@@ -181,7 +181,7 @@ TEST_F(IntegrationRpc, Step02_CreateNodeB)
 TEST_F(IntegrationRpc, Step03_AddEdge_A_to_B_Type4)
 {
   auto &ws = client->getWaitScope();
-  auto cap = client->getMain<stardust::rpc::GraphDb>();
+  auto cap = client->getMain<stardust::rpc::Stardust>();
 
   auto add = cap.addEdgeRequest();
   auto ap = add.initParams();
@@ -203,51 +203,51 @@ TEST_F(IntegrationRpc, Step03_AddEdge_A_to_B_Type4)
 TEST_F(IntegrationRpc, Step04_NeighborsOfA_OUT_IncludeB)
 {
   auto &ws = client->getWaitScope();
-  auto cap = client->getMain<stardust::rpc::GraphDb>();
+  auto cap = client->getMain<stardust::rpc::Stardust>();
 
-  auto req = cap.neighborsRequest();
+  auto req = cap.listAdjacencyRequest();
   auto np = req.initParams();
   np.setNode(idA);
   np.setDirection(stardust::rpc::Direction::OUT);
   np.setLimit(16);
 
   auto resp = req.send().wait(ws);
-  auto list = resp.getResult().getNeighbors();
+  auto items = resp.getResult().getItems();
 
   bool found = false;
-  for (auto x : list)
-    if (x == idB)
+  for (auto row : items)
+    if (row.getNeighbor() == idB)
       found = true;
   EXPECT_TRUE(found);
-  EXPECT_EQ(list.size(), 1u);
+  EXPECT_EQ(items.size(), 1u);
 }
 
 TEST_F(IntegrationRpc, Step05_NeighborsOfB_IN_IncludeA)
 {
   auto &ws = client->getWaitScope();
-  auto cap = client->getMain<stardust::rpc::GraphDb>();
+  auto cap = client->getMain<stardust::rpc::Stardust>();
 
-  auto req = cap.neighborsRequest();
+  auto req = cap.listAdjacencyRequest();
   auto np = req.initParams();
   np.setNode(idB);
   np.setDirection(stardust::rpc::Direction::IN);
   np.setLimit(16);
 
   auto resp = req.send().wait(ws);
-  auto list = resp.getResult().getNeighbors();
+  auto items = resp.getResult().getItems();
 
   bool found = false;
-  for (auto x : list)
-    if (x == idA)
+  for (auto row : items)
+    if (row.getNeighbor() == idA)
       found = true;
   EXPECT_TRUE(found);
-  EXPECT_EQ(list.size(), 1u);
+  EXPECT_EQ(items.size(), 1u);
 }
 
 TEST_F(IntegrationRpc, Step06_UpsertNodeAProps)
 {
   auto &ws = client->getWaitScope();
-  auto cap = client->getMain<stardust::rpc::GraphDb>();
+  auto cap = client->getMain<stardust::rpc::Stardust>();
 
   auto req = cap.upsertNodePropsRequest();
   auto p = req.initParams();
@@ -267,12 +267,19 @@ TEST_F(IntegrationRpc, Step06_UpsertNodeAProps)
     v.setBoolv(false);
   }
 
-  auto setCold = p.initSetCold(1);
+  auto setCold = p.initSetCold(2);
   {
     auto pr = setCold[0];
     pr.setKey("coldprop-c");
     auto v = pr.initVal();
-    v.setTextId(123u);
+    v.setText("cold-text-c");
+  }
+  {
+    auto pr = setCold[1];
+    pr.setKey("bin-prop");
+    auto v = pr.initVal();
+    const capnp::byte raw[] = {0xff, 0xfe, 0x00, 0xff};
+    v.setBytes(capnp::Data::Reader(raw, sizeof(raw)));
   }
 
   auto unset = p.initUnsetKeys(1);
@@ -284,7 +291,7 @@ TEST_F(IntegrationRpc, Step06_UpsertNodeAProps)
 TEST_F(IntegrationRpc, Step07_GetNodeAHeaderAndProps)
 {
   auto &ws = client->getWaitScope();
-  auto cap = client->getMain<stardust::rpc::GraphDb>();
+  auto cap = client->getMain<stardust::rpc::Stardust>();
 
   {
     auto gn = cap.getNodeRequest();
@@ -335,28 +342,62 @@ TEST_F(IntegrationRpc, Step07_GetNodeAHeaderAndProps)
     auto resp = gp.send().wait(ws);
     auto all = resp.getResult().getProps();
 
-    ASSERT_GE(all.size(), 3u);
+    ASSERT_GE(all.size(), 4u);
 
-    bool hasA = false, hasB = false, hasC = false, hasColdC = false, hasRandom = false;
+    bool hasA = false, hasB = false, hasC = false, hasColdC = false, hasRandom = false, hasBin = false;
+    bool hotAF64Ok = false, hotCBoolOk = false, coldCTextOk = false, binBytesOk = false;
     for (auto p : all)
     {
       const auto key = p.getKey().cStr();
       if (strcmp(key, "hotprop-a") == 0)
+      {
         hasA = true;
+        auto val = p.getVal();
+        EXPECT_EQ(val.which(), stardust::rpc::Value::F64);
+        if (val.which() == stardust::rpc::Value::F64) hotAF64Ok = (val.getF64() == 3.14);
+      }
       else if (strcmp(key, "hotprop-b") == 0)
         hasB = true;
       else if (strcmp(key, "coldprop-c") == 0)
+      {
         hasC = true;
+        auto val = p.getVal();
+        EXPECT_EQ(val.which(), stardust::rpc::Value::TEXT);
+        if (val.which() == stardust::rpc::Value::TEXT)
+          coldCTextOk = (strcmp(val.getText().cStr(), "cold-text-c") == 0);
+      }
       else if (strcmp(key, "hotprop-c") == 0)
+      {
         hasColdC = true;
+        auto val = p.getVal();
+        EXPECT_EQ(val.which(), stardust::rpc::Value::BOOLV);
+        if (val.which() == stardust::rpc::Value::BOOLV) hotCBoolOk = (val.getBoolv() == false);
+      }
+      else if (strcmp(key, "bin-prop") == 0)
+      {
+        hasBin = true;
+        auto val = p.getVal();
+        EXPECT_EQ(val.which(), stardust::rpc::Value::BYTES);
+        if (val.which() == stardust::rpc::Value::BYTES)
+        {
+          auto d = val.getBytes();
+          const capnp::byte exp[] = {0xff, 0xfe, 0x00, 0xff};
+          binBytesOk = (d.size() == sizeof(exp) && std::memcmp(d.begin(), exp, sizeof(exp)) == 0);
+        }
+      }
       else if (strcmp(key, "hotprop-random-other-key") == 0)
         hasRandom = true;
     }
     EXPECT_TRUE(hasA);
     EXPECT_TRUE(hasC);
     EXPECT_TRUE(hasColdC);
+    EXPECT_TRUE(hasBin);
     EXPECT_FALSE(hasB);
     EXPECT_FALSE(hasRandom);
+    EXPECT_TRUE(hotAF64Ok);
+    EXPECT_TRUE(hotCBoolOk);
+    EXPECT_TRUE(coldCTextOk);
+    EXPECT_TRUE(binBytesOk);
   }
 
   {
@@ -389,7 +430,7 @@ TEST_F(IntegrationRpc, Step07_GetNodeAHeaderAndProps)
 TEST_F(IntegrationRpc, Step08_SetLabelsOnBAndVerify)
 {
   auto &ws = client->getWaitScope();
-  auto cap = client->getMain<stardust::rpc::GraphDb>();
+  auto cap = client->getMain<stardust::rpc::Stardust>();
 
   auto sl = cap.setNodeLabelsRequest();
   auto sp = sl.initParams();
@@ -426,7 +467,7 @@ TEST_F(IntegrationRpc, Step08_SetLabelsOnBAndVerify)
 TEST_F(IntegrationRpc, Step09_VectorsOnB_AddGetDelete)
 {
   auto &ws = client->getWaitScope();
-  auto cap = client->getMain<stardust::rpc::GraphDb>();
+  auto cap = client->getMain<stardust::rpc::Stardust>();
 
   auto up = cap.upsertVectorRequest();
   auto p = up.initParams();
@@ -493,7 +534,7 @@ TEST_F(IntegrationRpc, Step09_VectorsOnB_AddGetDelete)
 TEST_F(IntegrationRpc, Step10_AddSecondEdgeAtoB_AndFilters)
 {
   auto &ws = client->getWaitScope();
-  auto cap = client->getMain<stardust::rpc::GraphDb>();
+  auto cap = client->getMain<stardust::rpc::Stardust>();
 
   {
     auto add = cap.addEdgeRequest();
@@ -510,74 +551,87 @@ TEST_F(IntegrationRpc, Step10_AddSecondEdgeAtoB_AndFilters)
 
   {
     {
-      auto req = cap.neighborsRequest();
+      auto req = cap.listAdjacencyRequest();
       auto np = req.initParams();
       np.setNode(idA);
       np.setDirection(stardust::rpc::Direction::OUT);
       np.setLimit(16);
 
       auto resp = req.send().wait(ws);
-      EXPECT_EQ(resp.getResult().getNeighbors().size(), 2u);
+      EXPECT_EQ(resp.getResult().getItems().size(), 2u);
     }
 
-    auto req = cap.neighborsRequest();
+    auto req = cap.listAdjacencyRequest();
     auto np = req.initParams();
 
     np.setNode(idA);
     np.setDirection(stardust::rpc::Direction::OUT);
     np.setLimit(16);
 
-    auto rel = np.initRelTypeIn(1);
-    rel.set(0, "edgetype-b");
-
     auto resp = req.send().wait(ws);
-    auto list = resp.getResult().getNeighbors();
+    auto items = resp.getResult().getItems();
 
     bool found = false;
-    for (auto x : list)
-      if (x == idB)
-        found = true;
-    EXPECT_EQ(list.size(), 1u);
+    size_t count = 0;
+    for (auto row : items) {
+      if (strcmp(row.getType().cStr(), "edgetype-b") == 0) {
+        ++count;
+        if (row.getNeighbor() == idB) found = true;
+      }
+    }
+    EXPECT_EQ(count, 1u);
     EXPECT_TRUE(found);
   }
 
   {
-    auto req = cap.neighborsRequest();
+    auto req = cap.listAdjacencyRequest();
     auto np = req.initParams();
     np.setNode(idA);
     np.setDirection(stardust::rpc::Direction::OUT);
     np.setLimit(16);
-    auto rel = np.initRelTypeIn(1);
-    rel.set(0, "edgetype-a");
     auto resp = req.send().wait(ws);
-    auto list = resp.getResult().getNeighbors();
+    auto items = resp.getResult().getItems();
 
     bool found = false;
-    for (auto x : list)
-      if (x == idB)
-        found = true;
-    EXPECT_EQ(list.size(), 1u);
+    size_t count = 0;
+    for (auto row : items) {
+      if (strcmp(row.getType().cStr(), "edgetype-a") == 0) {
+        ++count;
+        if (row.getNeighbor() == idB) found = true;
+      }
+    }
+    EXPECT_EQ(count, 1u);
     EXPECT_TRUE(found);
   }
 
   {
-    auto req = cap.neighborsRequest();
+    auto req = cap.listAdjacencyRequest();
     auto np = req.initParams();
 
     np.setNode(idA);
     np.setDirection(stardust::rpc::Direction::OUT);
     np.setLimit(16);
-    auto has = np.initNeighborHas();
-    auto names = has.initNames(1);
-    names.set(0, "nodelabel-b");
 
     auto resp = req.send().wait(ws);
-    auto list = resp.getResult().getNeighbors();
+    auto items = resp.getResult().getItems();
 
     bool found = false;
-    for (auto x : list)
-      if (x == idB)
-        found = true;
+    for (auto row : items) {
+      if (row.getNeighbor() == idB) {
+        // verify neighbor has label "nodelabel-b"
+        auto gn = cap.getNodeRequest();
+        gn.initParams().setId(row.getNeighbor());
+        auto r = gn.send().wait(ws);
+        auto lnames = r.getResult().getHeader().getLabels().getNames();
+        bool hasLabel = false;
+        for (uint32_t i = 0; i < lnames.size(); ++i) {
+          if (strcmp(lnames[i].cStr(), "nodelabel-b") == 0) {
+            hasLabel = true;
+          }
+        }
+        if (hasLabel) found = true;
+      }
+    }
     EXPECT_TRUE(found);
   }
 }
@@ -585,7 +639,7 @@ TEST_F(IntegrationRpc, Step10_AddSecondEdgeAtoB_AndFilters)
 TEST_F(IntegrationRpc, Step11_UpdateEdgeProps_OnEdge1)
 {
   auto &ws = client->getWaitScope();
-  auto cap = client->getMain<stardust::rpc::GraphDb>();
+  auto cap = client->getMain<stardust::rpc::Stardust>();
 
   auto upd = cap.updateEdgePropsRequest();
   auto up = upd.initParams();
@@ -613,7 +667,7 @@ TEST_F(IntegrationRpc, Step11_UpdateEdgeProps_OnEdge1)
 TEST_F(IntegrationRpc, Step12_BatchWrite)
 {
   auto &ws = client->getWaitScope();
-  auto cap = client->getMain<stardust::rpc::GraphDb>();
+  auto cap = client->getMain<stardust::rpc::Stardust>();
 
   auto wr = cap.writeBatchRequest();
   auto batch = wr.initBatch();
@@ -691,7 +745,7 @@ TEST_F(IntegrationRpc, Step12_BatchWrite)
 TEST_F(IntegrationRpc, Step13_CreateC_AndConnect_B_to_C)
 {
   auto &ws = client->getWaitScope();
-  auto cap = client->getMain<stardust::rpc::GraphDb>();
+  auto cap = client->getMain<stardust::rpc::Stardust>();
 
   auto req = cap.createNodeRequest();
   auto p = req.initParams();
@@ -716,52 +770,48 @@ TEST_F(IntegrationRpc, Step13_CreateC_AndConnect_B_to_C)
 TEST_F(IntegrationRpc, Step14_VerifyNeighborsOfBIncludeC)
 {
   auto &ws = client->getWaitScope();
-  auto cap = client->getMain<stardust::rpc::GraphDb>();
+  auto cap = client->getMain<stardust::rpc::Stardust>();
 
-  auto req = cap.neighborsRequest();
+  auto req = cap.listAdjacencyRequest();
   auto np = req.initParams();
   np.setNode(idB);
   np.setDirection(stardust::rpc::Direction::OUT);
   np.setLimit(16);
 
   auto resp = req.send().wait(ws);
-  auto list = resp.getResult().getNeighbors();
+  auto items = resp.getResult().getItems();
 
   bool found = false;
-  for (auto x : list)
-    if (x == idC)
+  for (auto row : items)
+    if (row.getNeighbor() == idC)
       found = true;
   EXPECT_TRUE(found);
 
   {
-    auto rq = cap.neighborsRequest();
+    auto rq = cap.listAdjacencyRequest();
     auto np2 = rq.initParams();
     np2.setNode(idB);
     np2.setDirection(stardust::rpc::Direction::OUT);
     np2.setLimit(16);
-    auto rel = np2.initRelTypeIn(1);
-    rel.set(0, "edgetype-c");
     auto r = rq.send().wait(ws);
 
     bool hasC = false;
-    for (auto x : r.getResult().getNeighbors())
-      if (x == idC)
+    for (auto row : r.getResult().getItems())
+      if (strcmp(row.getType().cStr(), "edgetype-c") == 0 && row.getNeighbor() == idC)
         hasC = true;
     EXPECT_TRUE(hasC);
   }
   {
-    auto rq = cap.neighborsRequest();
+    auto rq = cap.listAdjacencyRequest();
     auto np2 = rq.initParams();
     np2.setNode(idB);
     np2.setDirection(stardust::rpc::Direction::OUT);
     np2.setLimit(16);
-    auto rel = np2.initRelTypeIn(1);
-    rel.set(0, "edgetype-b");
     auto r = rq.send().wait(ws);
 
     bool hasC = false;
-    for (auto x : r.getResult().getNeighbors())
-      if (x == idC)
+    for (auto row : r.getResult().getItems())
+      if (strcmp(row.getType().cStr(), "edgetype-b") == 0 && row.getNeighbor() == idC)
         hasC = true;
     EXPECT_FALSE(hasC);
   }
@@ -770,7 +820,7 @@ TEST_F(IntegrationRpc, Step14_VerifyNeighborsOfBIncludeC)
 TEST_F(IntegrationRpc, Step15_DeleteEdgesAtoB_AndVerify)
 {
   auto &ws = client->getWaitScope();
-  auto cap = client->getMain<stardust::rpc::GraphDb>();
+  auto cap = client->getMain<stardust::rpc::Stardust>();
 
   auto del = cap.deleteEdgeRequest();
   del.initParams().setEdgeId(edge1);
@@ -778,47 +828,47 @@ TEST_F(IntegrationRpc, Step15_DeleteEdgesAtoB_AndVerify)
   auto del2 = cap.deleteEdgeRequest();
   del2.initParams().setEdgeId(edge2);
   del2.send().wait(ws);
-  auto req = cap.neighborsRequest();
+  auto req = cap.listAdjacencyRequest();
   auto np = req.initParams();
   np.setNode(idA);
   np.setDirection(stardust::rpc::Direction::OUT);
   np.setLimit(16);
 
   auto resp = req.send().wait(ws);
-  auto list = resp.getResult().getNeighbors();
+  auto items = resp.getResult().getItems();
 
   bool found = false;
-  for (auto x : list)
-    if (x == idB)
+  for (auto row : items)
+    if (row.getNeighbor() == idB)
       found = true;
   EXPECT_FALSE(found);
-  EXPECT_EQ(list.size(), 0u);
+  EXPECT_EQ(items.size(), 0u);
 }
 
 TEST_F(IntegrationRpc, Step16_DeleteNodeB_AndEnsureNoNeighbors)
 {
   auto &ws = client->getWaitScope();
-  auto cap = client->getMain<stardust::rpc::GraphDb>();
+  auto cap = client->getMain<stardust::rpc::Stardust>();
 
   auto dn = cap.deleteNodeRequest();
   dn.initParams().setId(idB);
   dn.send().wait(ws);
-  auto req = cap.neighborsRequest();
+  auto req = cap.listAdjacencyRequest();
   auto np = req.initParams();
   np.setNode(idB);
   np.setDirection(stardust::rpc::Direction::OUT);
   np.setLimit(16);
 
   auto resp = req.send().wait(ws);
-  auto list = resp.getResult().getNeighbors();
+  auto items = resp.getResult().getItems();
 
-  EXPECT_EQ(list.size(), 0u);
+  EXPECT_EQ(items.size(), 0u);
 }
 
 TEST_F(IntegrationRpc, Step18_CreateNodesWithVectorsForKnn)
 {
   auto &ws = client->getWaitScope();
-  auto cap = client->getMain<stardust::rpc::GraphDb>();
+  auto cap = client->getMain<stardust::rpc::Stardust>();
 
   // 5 nodes with vectors of dimension 4 and tag "knn-test"
   std::vector<uint64_t> nodeIds;
@@ -922,7 +972,7 @@ TEST_F(IntegrationRpc, Step18_CreateNodesWithVectorsForKnn)
 TEST_F(IntegrationRpc, Step19_KnnQueries)
 {
   auto &ws = client->getWaitScope();
-  auto cap = client->getMain<stardust::rpc::GraphDb>();
+  auto cap = client->getMain<stardust::rpc::Stardust>();
   
   // test 1: Query with [1.0, 0.0, 0.0, 0.0], k=3
   // Should find node 1 as exact match (score ~1.0), then node 3 (has 0.7071 in first dim)

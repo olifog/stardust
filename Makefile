@@ -1,5 +1,5 @@
 
-.PHONY: all configure build test clean rebuild debug release
+.PHONY: all configure build test clean rebuild debug release sync-capnp
 
 CMAKE ?= cmake
 ARGS ?=
@@ -11,6 +11,9 @@ CapnProto_DIR ?= $(shell sh -c 'if command -v dpkg >/dev/null 2>&1; then dpkg -L
 CAPNP_DIR_FLAG := $(if $(CapnProto_DIR),-DCapnProto_DIR=$(CapnProto_DIR),)
 
 BUILD_DIR := build/$(PRESET)
+
+SRC_CAPNP := schemas/graph.capnp
+PY_CAPNP := clients/python/src/stardust/schemas/graph.capnp
 
 all: build
 
@@ -37,4 +40,6 @@ debug:
 release:
 	$(MAKE) PRESET=release build
 
-
+sync-capnp:
+	mkdir -p $(dir $(PY_CAPNP))
+	cp $(SRC_CAPNP) $(PY_CAPNP)

@@ -31,6 +31,39 @@ namespace stardust
     return std::string(static_cast<const char *>(v.mv_data), v.mv_size);
   }
 
+  static std::optional<uint32_t> lookup_text_id_by_name(Txn &tx, Env &env, std::string_view name)
+  {
+    MDB_val k{name.size(), const_cast<char *>(name.data())}, v{};
+    int rc = mdb_get(tx.get(), env.textsByName(), &k, &v);
+    if (rc == MDB_NOTFOUND)
+      return std::nullopt;
+    if (rc)
+      throw MdbError(mdb_strerror(rc));
+    if (v.mv_size != 4)
+      throw MdbError("corrupt text id value");
+    uint32_t id = read_be32(static_cast<const unsigned char *>(v.mv_data));
+    return id;
+  }
+
+  static void write_text_name_id_pair(Txn &tx, Env &env, uint32_t id, std::string_view name)
+  {
+    std::string idk = key_u32_be(id);
+    MDB_val idKey{idk.size(), const_cast<char *>(idk.data())};
+    MDB_val nameVal{name.size(), const_cast<char *>(name.data())};
+    int rc = mdb_put(tx.get(), env.textIds(), &idKey, &nameVal, 0);
+    if (rc)
+      throw MdbError(mdb_strerror(rc));
+
+    std::string idbe;
+    idbe.reserve(4);
+    put_be32(idbe, id);
+    MDB_val nameKey{name.size(), const_cast<char *>(name.data())};
+    MDB_val idVal{idbe.size(), const_cast<char *>(idbe.data())};
+    rc = mdb_put(tx.get(), env.textsByName(), &nameKey, &idVal, 0);
+    if (rc)
+      throw MdbError(mdb_strerror(rc));
+  }
+
   static bool mdb_get_val(MDB_txn *tx, DbHandle dbi, std::string_view key, MDB_val &out)
   {
     MDB_val k{key.size(), const_cast<char *>(key.data())};
@@ -709,45 +742,26 @@ namespace stardust
     tx.commit();
   }
 
-  NeighborsResult Store::neighbors(const NeighborsParams &params)
+
+  ListAdjacencyResult Store::listAdjacency(const ListAdjacencyParams &params)
   {
-    NeighborsResult result{};
-    std::unordered_set<uint64_t> seen;
-    result.neighbors.reserve(params.limit);
-
-    auto includeType = [&](uint32_t t) -> bool
-    {
-      if (params.relTypeIn.empty())
-        return true;
-      return std::find(params.relTypeIn.begin(), params.relTypeIn.end(), t) != params.relTypeIn.end();
-    };
-
-    auto scanDir = [&](bool outDir)
+    ListAdjacencyResult out{};
+    auto scan = [&](bool outgoing)
     {
       Txn tx(env_.raw(), false);
-      auto passesLabelFilter = [&](uint64_t nodeId) -> bool
-      {
-        if (params.neighborHas.labelIds.empty())
-          return true;
-        auto nk = key_nodes_be(nodeId);
-        MDB_val k{nk.size(), const_cast<char *>(nk.data())}, v{};
-        int rc = mdb_get(tx.get(), env_.nodes(), &k, &v);
-        if (rc)
-          return false;
-        NodeHeader hdr = decode_node_header(std::string_view(reinterpret_cast<const char *>(v.mv_data), v.mv_size));
-        return labels_contains_all(hdr.labels.labelIds, params.neighborHas.labelIds);
-      };
       MDB_cursor *cur{};
-      auto dbi = outDir ? env_.edgesBySrcType() : env_.edgesByDstType();
+      auto dbi = outgoing ? env_.edgesBySrcType() : env_.edgesByDstType();
       int rc = mdb_cursor_open(tx.get(), dbi, &cur);
       if (rc)
         throw MdbError(mdb_strerror(rc));
-      std::string start = outDir ? key_edge_by_src_type_be(params.node, 0, 0, 0)
-                                 : key_edge_by_dst_type_be(params.node, 0, 0, 0);
+      std::string start = outgoing ? key_edge_by_src_type_be(params.node, 0, 0, 0)
+                                   : key_edge_by_dst_type_be(params.node, 0, 0, 0);
       MDB_val k{start.size(), const_cast<char *>(start.data())}, v{};
       rc = mdb_cursor_get(cur, &k, &v, MDB_SET_RANGE);
-      while (rc == 0 && result.neighbors.size() < params.limit)
+      while (rc == 0)
       {
+        if (params.limit != 0 && out.items.size() >= params.limit)
+          break;
         const unsigned char *kb = static_cast<const unsigned char *>(k.mv_data);
         if (k.mv_size < 8 + 4 + 8 + 8)
           break;
@@ -755,35 +769,47 @@ namespace stardust
         if (major != params.node)
           break;
         uint32_t typeId = read_be32(kb + 8);
-        uint64_t other = read_be64(kb + 12 + (outDir ? 0 : 8)); // dst if out, src if in
-        if (includeType(typeId))
-        {
-          if (passesLabelFilter(other))
-          {
-            if (params.direction == Direction::Both)
-            {
-              if (seen.insert(other).second)
-                result.neighbors.push_back(other);
-            }
-            else
-            {
-              result.neighbors.push_back(other);
-            }
-          }
-        }
+        uint64_t neighbor = outgoing ? read_be64(kb + 12) : read_be64(kb + 12);
+        uint64_t edgeId = read_be64(kb + 20);
+        (void)neighbor; // same offset both indexes account ordering
+        Adjacency a{};
+        a.neighborId = outgoing ? read_be64(kb + 12) : read_be64(kb + 12);
+        a.edgeId = edgeId;
+        a.typeId = typeId;
+        a.direction = outgoing ? Direction::Out : Direction::In;
+        out.items.push_back(a);
         rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
       }
       mdb_cursor_close(cur);
     };
 
     if (params.direction == Direction::Out || params.direction == Direction::Both)
-      scanDir(true);
-    if (result.neighbors.size() < params.limit && (params.direction == Direction::In || params.direction == Direction::Both))
-      scanDir(false);
+      scan(true);
+    if ((params.limit == 0 || out.items.size() < params.limit) && (params.direction == Direction::In || params.direction == Direction::Both))
+      scan(false);
+    if (params.limit != 0 && out.items.size() > params.limit)
+      out.items.resize(params.limit);
+    return out;
+  }
 
-    if (result.neighbors.size() > params.limit)
-      result.neighbors.resize(params.limit);
-    return result;
+  std::vector<uint64_t> Store::neighborsOut(uint64_t node, uint32_t limit)
+  {
+    ListAdjacencyParams p{.node = node, .direction = Direction::Out, .limit = limit};
+    auto r = listAdjacency(p);
+    std::vector<uint64_t> ids;
+    ids.reserve(r.items.size());
+    for (const auto &a : r.items) ids.push_back(a.neighborId);
+    return ids;
+  }
+
+  std::vector<uint64_t> Store::neighborsIn(uint64_t node, uint32_t limit)
+  {
+    ListAdjacencyParams p{.node = node, .direction = Direction::In, .limit = limit};
+    auto r = listAdjacency(p);
+    std::vector<uint64_t> ids;
+    ids.reserve(r.items.size());
+    for (const auto &a : r.items) ids.push_back(a.neighborId);
+    return ids;
   }
 
   inline void dot_product_norm_scalar(const float *x, const float *y, uint32_t dim,
@@ -960,6 +986,26 @@ namespace stardust
     }
   }
 
+  uint32_t Store::getOrCreateTextId(const std::string &name, bool createIfMissing)
+  {
+    if (!createIfMissing)
+    {
+      Txn tx(env_.raw(), false);
+      if (auto found = lookup_text_id_by_name(tx, env_, name))
+        return *found;
+      throw MdbError("text not found");
+    }
+    {
+      Txn tx(env_.raw(), true);
+      if (auto found = lookup_text_id_by_name(tx, env_, name))
+        return *found;
+      uint32_t id = static_cast<uint32_t>(incr_meta_seq(tx, env_, key_meta_text_seq(), 0));
+      write_text_name_id_pair(tx, env_, id, name);
+      tx.commit();
+      return id;
+    }
+  }
+
   uint32_t Store::getOrCreateRelTypeId(const GetOrCreateRelTypeIdParams &params)
   {
     if (!params.createIfMissing)
@@ -1055,6 +1101,12 @@ namespace stardust
   {
     Txn tx(env_.raw(), false);
     return read_string_by_id(tx, env_.vecTagIds(), id);
+  }
+
+  std::string Store::getTextName(uint32_t id)
+  {
+    Txn tx(env_.raw(), false);
+    return read_string_by_id(tx, env_.textIds(), id);
   }
 
   GetNodeResult Store::getNode(const GetNodeParams &params)
@@ -1231,6 +1283,144 @@ namespace stardust
     ref.src = read_be64(p + 8);
     ref.dst = read_be64(p + 16);
     return ref;
+  }
+
+  GetEdgeHeaderResult Store::getEdgeHeader(const GetEdgeParams &params)
+  {
+    GetEdgeHeaderResult out{};
+    out.ref = getEdge(params);
+    // discover typeId by scanning one index for the edgeId suffix
+    Txn tx(env_.raw(), false);
+    uint32_t foundType = 0;
+    {
+      MDB_cursor *cur{};
+      int rc = mdb_cursor_open(tx.get(), env_.edgesBySrcType(), &cur);
+      if (rc)
+        throw MdbError(mdb_strerror(rc));
+      std::string start = key_edge_by_src_type_be(out.ref.src, 0, 0, 0);
+      MDB_val ck{start.size(), const_cast<char *>(start.data())}, cv{};
+      rc = mdb_cursor_get(cur, &ck, &cv, MDB_SET_RANGE);
+      while (rc == 0)
+      {
+        const unsigned char *kb = static_cast<const unsigned char *>(ck.mv_data);
+        if (ck.mv_size < 8 + 4 + 8 + 8) break;
+        uint64_t src = read_be64(kb + 0);
+        if (src != out.ref.src) break;
+        uint32_t typeId = read_be32(kb + 8);
+        uint64_t dst = read_be64(kb + 12);
+        uint64_t eid = read_be64(kb + 20);
+        if (dst == out.ref.dst && eid == out.ref.id) { foundType = typeId; break; }
+        rc = mdb_cursor_get(cur, &ck, &cv, MDB_NEXT);
+      }
+      mdb_cursor_close(cur);
+    }
+    out.typeId = foundType;
+    return out;
+  }
+
+  GetEdgePropsResult Store::getEdgeProps(const GetEdgePropsParams &params)
+  {
+    GetEdgePropsResult out{};
+    Txn tx(env_.raw(), false);
+    if (params.keyIds.empty())
+    {
+      MDB_cursor *cur{};
+      int rc = mdb_cursor_open(tx.get(), env_.edgeProps(), &cur);
+      if (rc)
+        throw MdbError(mdb_strerror(rc));
+      std::string start = key_edge_prop_be(params.edgeId, 0);
+      MDB_val k{start.size(), const_cast<char *>(start.data())}, v{};
+      rc = mdb_cursor_get(cur, &k, &v, MDB_SET_RANGE);
+      while (rc == 0)
+      {
+        const unsigned char *kb = static_cast<const unsigned char *>(k.mv_data);
+        if (k.mv_size < 8 + 4) break;
+        uint64_t major = read_be64(kb + 0);
+        if (major != params.edgeId) break;
+        uint32_t keyId = read_be32(kb + 8);
+        Value val{};
+        decode_value(static_cast<const unsigned char *>(v.mv_data), static_cast<const unsigned char *>(v.mv_data) + v.mv_size, val);
+        out.props.push_back(Property{keyId, std::move(val)});
+        rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
+      }
+      mdb_cursor_close(cur);
+    }
+    else
+    {
+      for (uint32_t keyId : params.keyIds)
+      {
+        auto kkey = key_edge_prop_be(params.edgeId, keyId);
+        MDB_val k{kkey.size(), const_cast<char *>(kkey.data())}, v{};
+        int rc = mdb_get(tx.get(), env_.edgeProps(), &k, &v);
+        if (rc == 0)
+        {
+          Value val{};
+          decode_value(static_cast<const unsigned char *>(v.mv_data), static_cast<const unsigned char *>(v.mv_data) + v.mv_size, val);
+          out.props.push_back(Property{keyId, std::move(val)});
+        }
+        else if (rc != MDB_NOTFOUND)
+          throw MdbError(mdb_strerror(rc));
+      }
+    }
+    return out;
+  }
+
+  ScanNodesByLabelResult Store::scanNodesByLabel(const ScanNodesByLabelParams &params)
+  {
+    ScanNodesByLabelResult out{};
+    Txn tx(env_.raw(), false);
+    MDB_cursor *cur{};
+    int rc = mdb_cursor_open(tx.get(), env_.labelIndex(), &cur);
+    if (rc)
+      throw MdbError(mdb_strerror(rc));
+    std::string start = key_label_index_be(params.labelId, 0);
+    MDB_val k{start.size(), const_cast<char *>(start.data())}, v{};
+    rc = mdb_cursor_get(cur, &k, &v, MDB_SET_RANGE);
+    while (rc == 0)
+    {
+      if (params.limit != 0 && out.nodeIds.size() >= params.limit)
+        break;
+      const unsigned char *kb = static_cast<const unsigned char *>(k.mv_data);
+      if (k.mv_size < 4 + 8) break;
+      uint32_t labelId = read_be32(kb + 0);
+      if (labelId != params.labelId) break;
+      uint64_t nodeId = read_be64(kb + 4);
+      out.nodeIds.push_back(nodeId);
+      rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
+    }
+    mdb_cursor_close(cur);
+    return out;
+  }
+
+  DegreeResult Store::degree(const DegreeParams &params)
+  {
+    DegreeResult out{};
+    auto countDir = [&](bool outgoing)
+    {
+      Txn tx(env_.raw(), false);
+      MDB_cursor *cur{};
+      auto dbi = outgoing ? env_.edgesBySrcType() : env_.edgesByDstType();
+      int rc = mdb_cursor_open(tx.get(), dbi, &cur);
+      if (rc)
+        throw MdbError(mdb_strerror(rc));
+      std::string start = outgoing ? key_edge_by_src_type_be(params.node, 0, 0, 0)
+                                   : key_edge_by_dst_type_be(params.node, 0, 0, 0);
+      MDB_val k{start.size(), const_cast<char *>(start.data())}, v{};
+      rc = mdb_cursor_get(cur, &k, &v, MDB_SET_RANGE);
+      while (rc == 0)
+      {
+        const unsigned char *kb = static_cast<const unsigned char *>(k.mv_data);
+        if (k.mv_size < 8 + 4 + 8 + 8) break;
+        uint64_t major = read_be64(kb + 0);
+        if (major != params.node) break;
+        out.count++;
+        rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
+      }
+      mdb_cursor_close(cur);
+    };
+    if (params.direction == Direction::Out || params.direction == Direction::Both) countDir(true);
+    if (params.direction == Direction::In || params.direction == Direction::Both) countDir(false);
+    return out;
   }
 
   void Store::deleteNode(const DeleteNodeParams &params)

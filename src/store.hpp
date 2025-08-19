@@ -122,18 +122,6 @@ namespace stardust
     std::vector<uint32_t> unsetKeys{};
   };
 
-  struct NeighborsParams
-  {
-    uint64_t node{0};
-    Direction direction{Direction::Out};
-    uint32_t limit{0};
-    std::vector<uint32_t> relTypeIn{}; // OR filter by relationship types
-    LabelSet neighborHas{};            // neighbor must have all labels
-  };
-  struct NeighborsResult
-  {
-    std::vector<uint64_t> neighbors;
-  };
 
   struct KnnParams
   {
@@ -149,6 +137,63 @@ namespace stardust
   struct KnnResult
   {
     std::vector<KnnPair> hits;
+  };
+
+  // -------------------- adjacency / edge listing ---------------------------
+
+  struct Adjacency
+  {
+    uint64_t neighborId{0};
+    uint64_t edgeId{0};
+    uint32_t typeId{0};
+    Direction direction{Direction::Out};
+  };
+
+  struct ListAdjacencyParams
+  {
+    uint64_t node{0};
+    Direction direction{Direction::Out};
+    uint32_t limit{0};
+  };
+  struct ListAdjacencyResult
+  {
+    std::vector<Adjacency> items;
+  };
+
+  struct GetEdgeHeaderResult
+  {
+    EdgeRef ref{};     // {id, src, dst}
+    uint32_t typeId{0};
+  };
+
+  struct GetEdgePropsParams
+  {
+    uint64_t edgeId{0};
+    std::vector<uint32_t> keyIds{}; // empty -> all props
+  };
+  struct GetEdgePropsResult
+  {
+    std::vector<Property> props;
+  };
+
+  struct ScanNodesByLabelParams
+  {
+    uint32_t labelId{0};
+    uint32_t limit{0};
+  };
+  struct ScanNodesByLabelResult
+  {
+    std::vector<uint64_t> nodeIds;
+  };
+
+  struct DegreeParams
+  {
+    uint64_t node{0};
+    Direction direction{Direction::Out};
+  };
+  struct DegreeResult
+  {
+    uint64_t count{0};
   };
 
   struct GetNodeParams
@@ -231,22 +276,31 @@ namespace stardust
     void updateEdgeProps(const UpdateEdgePropsParams &params);
 
     // reads / queries
-    NeighborsResult neighbors(const NeighborsParams &params);
+    ListAdjacencyResult listAdjacency(const ListAdjacencyParams &params);
+    std::vector<uint64_t> neighborsOut(uint64_t node, uint32_t limit);
+    std::vector<uint64_t> neighborsIn(uint64_t node, uint32_t limit);
     KnnResult knn(const KnnParams &params);
     GetNodeResult getNode(const GetNodeParams &params);
     GetNodePropsResult getNodeProps(const GetNodePropsParams &params);
     GetVectorsResult getVectors(const GetVectorsParams &params);
     EdgeRef getEdge(const GetEdgeParams &params);
+    GetEdgeHeaderResult getEdgeHeader(const GetEdgeParams &params);
+    GetEdgePropsResult getEdgeProps(const GetEdgePropsParams &params);
+    ScanNodesByLabelResult scanNodesByLabel(const ScanNodesByLabelParams &params);
+    DegreeResult degree(const DegreeParams &params);
+    
 
     // string interning helpers
     uint32_t getOrCreateLabelId(const GetOrCreateLabelIdParams &params);
     uint32_t getOrCreateRelTypeId(const GetOrCreateRelTypeIdParams &params);
     uint32_t getOrCreatePropKeyId(const GetOrCreatePropKeyIdParams &params);
     uint32_t getOrCreateVecTagId(const GetOrCreateVecTagIdParams &params);
+    uint32_t getOrCreateTextId(const std::string &name, bool createIfMissing);
     std::string getLabelName(uint32_t id);
     std::string getRelTypeName(uint32_t id);
     std::string getPropKeyName(uint32_t id);
     std::string getVecTagName(uint32_t id);
+    std::string getTextName(uint32_t id);
 
     // deletes
     void deleteNode(const DeleteNodeParams &params);

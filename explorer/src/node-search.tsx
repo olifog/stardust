@@ -1,6 +1,10 @@
 import { useState } from "react";
 
-export const NodeSearch = ({ onSearch }: { onSearch: (id: number) => void }) => {
+export const NodeSearch = ({
+  onSearch,
+}: {
+  onSearch: (id: number) => void;
+}) => {
   const [searchId, setSearchId] = useState("");
 
   return (
@@ -23,5 +27,3 @@ export const NodeSearch = ({ onSearch }: { onSearch: (id: number) => void }) => 
     </div>
   );
 };
-
-

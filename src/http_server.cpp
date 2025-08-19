@@ -275,38 +275,93 @@ namespace stardust::http
       reply_json(c, 200, "{%m:%llu}\n", MG_ESC("id"), (unsigned long long)e.id);
     }
 
-    static void handle_neighbors(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
+    static void handle_adjacency(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
     {
+      // /api/adjacency?node=...&direction=out|in|both&limit=...
       char nodeBuf[64], dirBuf[16], limitBuf[32];
       int nn = mg_http_get_var(&hm->query, "node", nodeBuf, sizeof(nodeBuf));
-      if (nn <= 0)
-      {
-        reply_json(c, 400, "{\"error\":\"missing node\"}\n");
-        return;
-      }
-      uint64_t node{};
-      mg_str nodeStr = mg_str_n(nodeBuf, (size_t)nn);
-      if (!parseUint64(nodeStr, node))
-      {
-        reply_json(c, 400, "{\"error\":\"invalid node\"}\n");
-        return;
-      }
-      uint32_t limit = 50;
-      int nl = mg_http_get_var(&hm->query, "limit", limitBuf, sizeof(limitBuf));
-      if (nl > 0)
-      {
-        mg_str limitStr = mg_str_n(limitBuf, (size_t)nl);
-        uint32_t parsed{}; if (parseUint32(limitStr, parsed)) limit = parsed;
-      }
-      stardust::NeighborsParams in{};
-      in.node = node;
-      int ndir = mg_http_get_var(&hm->query, "direction", dirBuf, sizeof(dirBuf));
-      if (ndir > 0) { mg_str dirStr = mg_str_n(dirBuf, (size_t)ndir); in.direction = parseDirection(dirStr); }
-      in.limit = limit;
-      auto res = st->store->neighbors(in);
+      if (nn <= 0) { reply_json(c, 400, "{\"error\":\"missing node\"}\n"); return; }
+      uint64_t node{}; if (!parseUint64(mg_str_n(nodeBuf, (size_t)nn), node)) { reply_json(c, 400, "{\"error\":\"invalid node\"}\n"); return; }
+      uint32_t limit = 50; int nl = mg_http_get_var(&hm->query, "limit", limitBuf, sizeof(limitBuf));
+      if (nl > 0) { mg_str ls = mg_str_n(limitBuf, (size_t)nl); uint32_t parsed{}; if (parseUint32(ls, parsed)) limit = parsed; }
+      stardust::ListAdjacencyParams in{}; in.node = node; in.limit = limit;
+      int ndir = mg_http_get_var(&hm->query, "direction", dirBuf, sizeof(dirBuf)); if (ndir > 0) in.direction = parseDirection(mg_str_n(dirBuf, (size_t)ndir));
+      auto resv = st->store->listAdjacency(in);
+      // emit rows
+      reply_json(c, 200, "{%m:[%M]}\n", MG_ESC("items"), [](mg_pfn_t o, void *a, va_list *ap) -> int {
+        const stardust::Adjacency *rows = va_arg(*ap, const stardust::Adjacency *);
+        size_t count = va_arg(*ap, size_t);
+        stardust::Store *store = va_arg(*ap, stardust::Store *);
+        mg_xprintf(o, a, "");
+        for (size_t i = 0; i < count; ++i) {
+          const auto &r = rows[i];
+          std::string typeName = store->getRelTypeName(r.typeId);
+          const char *dir = r.direction == stardust::Direction::Out ? "out" : (r.direction == stardust::Direction::In ? "in" : "both");
+          mg_xprintf(o, a, "%s{%m:%llu,%m:%llu,%m:%m,%m:%m}", i?",":"",
+                     MG_ESC("neighbor"), (unsigned long long)r.neighborId,
+                     MG_ESC("edgeId"), (unsigned long long)r.edgeId,
+                     MG_ESC("type"), MG_ESC(typeName.c_str()),
+                     MG_ESC("direction"), MG_ESC(dir));
+        }
+        return 0;
+      }, resv.items.data(), resv.items.size(), st->store);
+    }
 
-      reply_json(c, 200, "{%m:%M}\n",
-                 MG_ESC("neighbors"), print_u64_array, res.neighbors.data(), res.neighbors.size());
+    static void handle_edge_header(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
+    {
+      char idBuf[64]; int ni = mg_http_get_var(&hm->query, "edgeId", idBuf, sizeof(idBuf));
+      if (ni <= 0) { reply_json(c, 400, "{\"error\":\"missing edgeId\"}\n"); return; }
+      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { reply_json(c, 400, "{\"error\":\"invalid edgeId\"}\n"); return; }
+      auto r = st->store->getEdgeHeader(stardust::GetEdgeParams{.edgeId = id});
+      std::string typeName = st->store->getRelTypeName(r.typeId);
+      reply_json(c, 200, "{%m:%llu,%m:%llu,%m:%llu,%m:%m}\n",
+                 MG_ESC("id"), (unsigned long long)r.ref.id,
+                 MG_ESC("src"), (unsigned long long)r.ref.src,
+                 MG_ESC("dst"), (unsigned long long)r.ref.dst,
+                 MG_ESC("type"), MG_ESC(typeName.c_str()));
+    }
+
+    static void handle_edge_props(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
+    {
+      char idBuf[64], keysBuf[4096];
+      int ni = mg_http_get_var(&hm->query, "edgeId", idBuf, sizeof(idBuf));
+      if (ni <= 0) { reply_json(c, 400, "{\"error\":\"missing edgeId\"}\n"); return; }
+      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { reply_json(c, 400, "{\"error\":\"invalid edgeId\"}\n"); return; }
+      std::vector<uint32_t> keyIds;
+      int nk = mg_http_get_var(&hm->query, "keys", keysBuf, sizeof(keysBuf));
+      if (nk > 0) {
+        std::vector<mg_str> parts; splitCsv(mg_str_n(keysBuf, (size_t)nk), parts);
+        keyIds.reserve(parts.size());
+        for (auto p : parts) keyIds.push_back(st->store->getOrCreatePropKeyId({std::string(p.buf, p.len), false}));
+      }
+      auto resv = st->store->getEdgeProps(stardust::GetEdgePropsParams{.edgeId = id, .keyIds = keyIds});
+      reply_json(c, 200, "{%m:%M}\n", MG_ESC("props"), print_props_object, resv.props.data(), resv.props.size(), st->store);
+    }
+
+    static void handle_scan_nodes_by_label(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
+    {
+      char labelBuf[256], limitBuf[32];
+      int nlbl = mg_http_get_var(&hm->query, "label", labelBuf, sizeof(labelBuf));
+      if (nlbl <= 0) { reply_json(c, 400, "{\"error\":\"missing label\"}\n"); return; }
+      uint32_t limit = 100; int nl = mg_http_get_var(&hm->query, "limit", limitBuf, sizeof(limitBuf));
+      if (nl > 0) { mg_str ls = mg_str_n(limitBuf, (size_t)nl); uint32_t parsed{}; if (parseUint32(ls, parsed)) limit = parsed; }
+      std::string label(labelBuf, (size_t)nlbl);
+      stardust::ScanNodesByLabelParams in{};
+      in.labelId = st->store->getOrCreateLabelId({label, false});
+      in.limit = limit;
+      auto resv = st->store->scanNodesByLabel(in);
+      reply_json(c, 200, "{%m:%M}\n", MG_ESC("nodeIds"), print_u64_array, resv.nodeIds.data(), resv.nodeIds.size());
+    }
+
+    static void handle_degree(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
+    {
+      char nodeBuf[64], dirBuf[16];
+      int nn = mg_http_get_var(&hm->query, "node", nodeBuf, sizeof(nodeBuf));
+      if (nn <= 0) { reply_json(c, 400, "{\"error\":\"missing node\"}\n"); return; }
+      uint64_t node{}; if (!parseUint64(mg_str_n(nodeBuf, (size_t)nn), node)) { reply_json(c, 400, "{\"error\":\"invalid node\"}\n"); return; }
+      stardust::DegreeParams in{}; in.node = node; int nd = mg_http_get_var(&hm->query, "direction", dirBuf, sizeof(dirBuf)); if (nd > 0) in.direction = parseDirection(mg_str_n(dirBuf, (size_t)nd));
+      auto resv = st->store->degree(in);
+      reply_json(c, 200, "{%m:%llu}\n", MG_ESC("count"), (unsigned long long)resv.count);
     }
 
     static void handle_get_node(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
@@ -644,9 +699,29 @@ namespace stardust::http
           handle_add_edge(c, st, hm);
           return;
         }
-        if (strEquals(hm->method, "GET") && mg_match(hm->uri, mg_str("/api/neighbors"), NULL))
+        if (strEquals(hm->method, "GET") && mg_match(hm->uri, mg_str("/api/adjacency"), NULL))
         {
-          handle_neighbors(c, st, hm);
+          handle_adjacency(c, st, hm);
+          return;
+        }
+        if (strEquals(hm->method, "GET") && mg_match(hm->uri, mg_str("/api/edgeHeader"), NULL))
+        {
+          handle_edge_header(c, st, hm);
+          return;
+        }
+        if (strEquals(hm->method, "GET") && mg_match(hm->uri, mg_str("/api/edgeProps"), NULL))
+        {
+          handle_edge_props(c, st, hm);
+          return;
+        }
+        if (strEquals(hm->method, "GET") && mg_match(hm->uri, mg_str("/api/scanNodesByLabel"), NULL))
+        {
+          handle_scan_nodes_by_label(c, st, hm);
+          return;
+        }
+        if (strEquals(hm->method, "GET") && mg_match(hm->uri, mg_str("/api/degree"), NULL))
+        {
+          handle_degree(c, st, hm);
           return;
         }
         if (strEquals(hm->method, "GET") && mg_match(hm->uri, mg_str("/api/node"), NULL))

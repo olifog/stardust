@@ -85,7 +85,7 @@ private:
         KJ_LOG(INFO, "http server listening on ", httpBind_);
       }
 
-      capnp::EzRpcServer server(kj::heap<stardust::rpc::GraphDbImpl>(store), bindC);
+      capnp::EzRpcServer server(kj::heap<stardust::rpc::StardustImpl>(store), bindC);
       auto &waitScope = server.getWaitScope();
       if (std::strncmp(bindC, "unix:", 5) == 0)
       {

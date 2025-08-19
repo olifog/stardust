@@ -85,6 +85,8 @@ namespace stardust
     open(tx.get(), vecTagIds_, "vecTagIds");
     open(tx.get(), vecTagsByName_, "vecTagsByName");
     open(tx.get(), vecTagMeta_, "vecTagMeta");
+    open(tx.get(), textIds_, "textIds");
+    open(tx.get(), textsByName_, "textsByName");
 
     open(tx.get(), meta_, "meta");
     open(tx.get(), labelIndex_, "labelIndex");
@@ -173,6 +175,8 @@ namespace stardust
   DbHandle Env::vecTagIds() const { return vecTagIds_; }
   DbHandle Env::vecTagsByName() const { return vecTagsByName_; }
   DbHandle Env::vecTagMeta() const { return vecTagMeta_; }
+  DbHandle Env::textIds() const { return textIds_; }
+  DbHandle Env::textsByName() const { return textsByName_; }
 
   DbHandle Env::meta() const { return meta_; }
   DbHandle Env::labelIndex() const { return labelIndex_; }

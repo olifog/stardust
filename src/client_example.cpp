@@ -32,7 +32,7 @@ int main(int argc, char **argv)
 {
   const char *addr = (argc > 1) ? argv[1] : "unix:/tmp/stardust.sock";
   capnp::EzRpcClient client(addr);
-  auto cap = client.getMain<stardust::rpc::GraphDb>();
+  auto cap = client.getMain<stardust::rpc::Stardust>();
 
   // create two nodes
   uint64_t idA = 0;
@@ -71,18 +71,18 @@ int main(int argc, char **argv)
     add.send().wait(client.getWaitScope());
   }
 
-  // neighbors of A
+  // adjacency (OUT) of A
   {
-    auto req = cap.neighborsRequest();
+    auto req = cap.listAdjacencyRequest();
     auto np = req.initParams();
     np.setNode(idA);
     np.setDirection(stardust::rpc::Direction::OUT);
     np.setLimit(16);
     auto resp = req.send().wait(client.getWaitScope());
-    auto list = resp.getResult().getNeighbors();
+    auto items = resp.getResult().getItems();
     std::cout << "neighbors of " << idA << ": ";
-    for (uint32_t i = 0; i < list.size(); ++i)
-      std::cout << list[i] << " ";
+    for (uint32_t i = 0; i < items.size(); ++i)
+      std::cout << items[i].getNeighbor() << " ";
     std::cout << "\n";
   }
 }

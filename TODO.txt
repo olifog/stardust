@@ -1,4 +1,4 @@
-### Prioritized TODOs
+### Prioritized TODOs (AI slop)
 
 - Vector search (must-have)
   - Implement KNN scan baseline (brute-force over `nodeVectors` with SIMD), support L2, cosine, dot-product, optional normalization.
