@@ -13,6 +13,7 @@
 #include <string>
 #include <cstdlib>
 #include <optional>
+#include <utility>
 
 namespace stardust::http
 {
@@ -206,10 +207,22 @@ namespace stardust::http
       return 0;
     }
 
+    // Common reply helper that adds CORS headers to JSON responses
+    template <typename... Args>
+    static void reply_json(struct mg_connection *c, int code, const char *fmt, Args &&...args)
+    {
+      mg_http_reply(c, code,
+                    "Content-Type: application/json\r\n"
+                    "Access-Control-Allow-Origin: *\r\n"
+                    "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n"
+                    "Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With\r\n",
+                    fmt, std::forward<Args>(args)...);
+    }
+
     // HTTP handlers -----------------------------------------------------------------
     static void handle_health(struct mg_connection *c)
     {
-      mg_http_reply(c, 200, "Content-Type: application/json\r\n", "{\"ok\":true}\n");
+      reply_json(c, 200, "{\"ok\":true}\n");
     }
 
     static void handle_create_node(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
@@ -231,7 +244,7 @@ namespace stardust::http
       }
 
       auto res = st->store->createNode(in);
-      mg_http_reply(c, 200, "Content-Type: application/json\r\n", "{%m:%llu}\n", MG_ESC("id"), (unsigned long long)res.id);
+      reply_json(c, 200, "{%m:%llu}\n", MG_ESC("id"), (unsigned long long)res.id);
     }
 
     static void handle_add_edge(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
@@ -242,7 +255,7 @@ namespace stardust::http
       int nt = mg_http_get_var(&hm->query, "type", typeBuf, sizeof(typeBuf));
       if (ns <= 0 || nd <= 0 || nt <= 0)
       {
-        mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"missing src,dst,type\"}\n");
+        reply_json(c, 400, "{\"error\":\"missing src,dst,type\"}\n");
         return;
       }
       uint64_t src{}, dst{};
@@ -251,7 +264,7 @@ namespace stardust::http
       mg_str typeStr = mg_str_n(typeBuf, (size_t)nt);
       if (!parseUint64(srcStr, src) || !parseUint64(dstStr, dst))
       {
-        mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"invalid src/dst\"}\n");
+        reply_json(c, 400, "{\"error\":\"invalid src/dst\"}\n");
         return;
       }
       stardust::AddEdgeParams in{};
@@ -259,7 +272,7 @@ namespace stardust::http
       in.dst = dst;
       in.meta.typeId = st->store->getOrCreateRelTypeId({std::string(typeStr.buf, typeStr.len), true});
       auto e = st->store->addEdge(in);
-      mg_http_reply(c, 200, "Content-Type: application/json\r\n", "{%m:%llu}\n", MG_ESC("id"), (unsigned long long)e.id);
+      reply_json(c, 200, "{%m:%llu}\n", MG_ESC("id"), (unsigned long long)e.id);
     }
 
     static void handle_neighbors(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
@@ -268,14 +281,14 @@ namespace stardust::http
       int nn = mg_http_get_var(&hm->query, "node", nodeBuf, sizeof(nodeBuf));
       if (nn <= 0)
       {
-        mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"missing node\"}\n");
+        reply_json(c, 400, "{\"error\":\"missing node\"}\n");
         return;
       }
       uint64_t node{};
       mg_str nodeStr = mg_str_n(nodeBuf, (size_t)nn);
       if (!parseUint64(nodeStr, node))
       {
-        mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"invalid node\"}\n");
+        reply_json(c, 400, "{\"error\":\"invalid node\"}\n");
         return;
       }
       uint32_t limit = 50;
@@ -292,32 +305,32 @@ namespace stardust::http
       in.limit = limit;
       auto res = st->store->neighbors(in);
 
-      mg_http_reply(c, 200, "Content-Type: application/json\r\n", "{%m:%M}\n",
-                    MG_ESC("neighbors"), print_u64_array, res.neighbors.data(), res.neighbors.size());
+      reply_json(c, 200, "{%m:%M}\n",
+                 MG_ESC("neighbors"), print_u64_array, res.neighbors.data(), res.neighbors.size());
     }
 
     static void handle_get_node(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
     {
       char idBuf[64];
       int ni = mg_http_get_var(&hm->query, "id", idBuf, sizeof(idBuf));
-      if (ni <= 0) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"missing id\"}\n"); return; }
-      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"invalid id\"}\n"); return; }
+      if (ni <= 0) { reply_json(c, 400, "{\"error\":\"missing id\"}\n"); return; }
+      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { reply_json(c, 400, "{\"error\":\"invalid id\"}\n"); return; }
       auto resv = st->store->getNode(stardust::GetNodeParams{.id = id});
       const auto &h = resv.header;
-      mg_http_reply(c, 200, "Content-Type: application/json\r\n",
-                    "{%m:{%m:%llu,%m:%M,%m:%M}}\n",
-                    MG_ESC("header"),
-                    MG_ESC("id"), (unsigned long long)h.id,
-                    MG_ESC("labels"), print_label_names_array, h.labels.labelIds.data(), h.labels.labelIds.size(), st->store,
-                    MG_ESC("hotProps"), print_props_object, h.hotProps.data(), h.hotProps.size(), st->store);
+      reply_json(c, 200,
+                 "{%m:{%m:%llu,%m:%M,%m:%M}}\n",
+                 MG_ESC("header"),
+                 MG_ESC("id"), (unsigned long long)h.id,
+                 MG_ESC("labels"), print_label_names_array, h.labels.labelIds.data(), h.labels.labelIds.size(), st->store,
+                 MG_ESC("hotProps"), print_props_object, h.hotProps.data(), h.hotProps.size(), st->store);
     }
 
     static void handle_get_node_props(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
     {
       char idBuf[64], keysBuf[4096];
       int ni = mg_http_get_var(&hm->query, "id", idBuf, sizeof(idBuf));
-      if (ni <= 0) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"missing id\"}\n"); return; }
-      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"invalid id\"}\n"); return; }
+      if (ni <= 0) { reply_json(c, 400, "{\"error\":\"missing id\"}\n"); return; }
+      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { reply_json(c, 400, "{\"error\":\"invalid id\"}\n"); return; }
       std::vector<uint32_t> keyIds;
       int nk = mg_http_get_var(&hm->query, "keys", keysBuf, sizeof(keysBuf));
       if (nk > 0)
@@ -327,16 +340,16 @@ namespace stardust::http
         for (auto p : parts) keyIds.push_back(st->store->getOrCreatePropKeyId({std::string(p.buf, p.len), false}));
       }
       auto resv = st->store->getNodeProps(stardust::GetNodePropsParams{.id = id, .keyIds = keyIds});
-      mg_http_reply(c, 200, "Content-Type: application/json\r\n", "{%m:%M}\n",
-                    MG_ESC("props"), print_props_object, resv.props.data(), resv.props.size(), st->store);
+      reply_json(c, 200, "{%m:%M}\n",
+                 MG_ESC("props"), print_props_object, resv.props.data(), resv.props.size(), st->store);
     }
 
     static void handle_get_vectors(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
     {
       char idBuf[64], tagsBuf[4096];
       int ni = mg_http_get_var(&hm->query, "id", idBuf, sizeof(idBuf));
-      if (ni <= 0) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"missing id\"}\n"); return; }
-      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"invalid id\"}\n"); return; }
+      if (ni <= 0) { reply_json(c, 400, "{\"error\":\"missing id\"}\n"); return; }
+      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { reply_json(c, 400, "{\"error\":\"invalid id\"}\n"); return; }
       std::vector<uint32_t> tagIds;
       int nt = mg_http_get_var(&hm->query, "tags", tagsBuf, sizeof(tagsBuf));
       if (nt > 0)
@@ -346,50 +359,50 @@ namespace stardust::http
         for (auto p : parts) tagIds.push_back(st->store->getOrCreateVecTagId({std::string(p.buf, p.len), false}));
       }
       auto resv = st->store->getVectors(stardust::GetVectorsParams{.id = id, .tagIds = tagIds});
-      mg_http_reply(c, 200, "Content-Type: application/json\r\n",
-                    "{%m:%M}\n", MG_ESC("vectors"), print_vectors_array, resv.vectors.data(), resv.vectors.size(), st->store);
+      reply_json(c, 200,
+                 "{%m:%M}\n", MG_ESC("vectors"), print_vectors_array, resv.vectors.data(), resv.vectors.size(), st->store);
     }
 
     static void handle_get_edge(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
     {
       char idBuf[64];
       int ni = mg_http_get_var(&hm->query, "edgeId", idBuf, sizeof(idBuf));
-      if (ni <= 0) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"missing edgeId\"}\n"); return; }
-      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"invalid edgeId\"}\n"); return; }
+      if (ni <= 0) { reply_json(c, 400, "{\"error\":\"missing edgeId\"}\n"); return; }
+      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { reply_json(c, 400, "{\"error\":\"invalid edgeId\"}\n"); return; }
       auto edge = st->store->getEdge(stardust::GetEdgeParams{.edgeId = id});
-      mg_http_reply(c, 200, "Content-Type: application/json\r\n",
-                    "{%m:%llu,%m:%llu,%m:%llu}\n",
-                    MG_ESC("id"), (unsigned long long)edge.id,
-                    MG_ESC("src"), (unsigned long long)edge.src,
-                    MG_ESC("dst"), (unsigned long long)edge.dst);
+      reply_json(c, 200,
+                 "{%m:%llu,%m:%llu,%m:%llu}\n",
+                 MG_ESC("id"), (unsigned long long)edge.id,
+                 MG_ESC("src"), (unsigned long long)edge.src,
+                 MG_ESC("dst"), (unsigned long long)edge.dst);
     }
 
     static void handle_delete_node(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
     {
       char idBuf[64];
       int ni = mg_http_get_var(&hm->query, "id", idBuf, sizeof(idBuf));
-      if (ni <= 0) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"missing id\"}\n"); return; }
-      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"invalid id\"}\n"); return; }
+      if (ni <= 0) { reply_json(c, 400, "{\"error\":\"missing id\"}\n"); return; }
+      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { reply_json(c, 400, "{\"error\":\"invalid id\"}\n"); return; }
       st->store->deleteNode(stardust::DeleteNodeParams{.id = id});
-      mg_http_reply(c, 200, "Content-Type: application/json\r\n", "{\"ok\":true}\n");
+      reply_json(c, 200, "{\"ok\":true}\n");
     }
 
     static void handle_delete_edge(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
     {
       char idBuf[64];
       int ni = mg_http_get_var(&hm->query, "edgeId", idBuf, sizeof(idBuf));
-      if (ni <= 0) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"missing edgeId\"}\n"); return; }
-      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"invalid edgeId\"}\n"); return; }
+      if (ni <= 0) { reply_json(c, 400, "{\"error\":\"missing edgeId\"}\n"); return; }
+      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { reply_json(c, 400, "{\"error\":\"invalid edgeId\"}\n"); return; }
       st->store->deleteEdge(stardust::DeleteEdgeParams{.edgeId = id});
-      mg_http_reply(c, 200, "Content-Type: application/json\r\n", "{\"ok\":true}\n");
+      reply_json(c, 200, "{\"ok\":true}\n");
     }
 
     static void handle_set_node_labels(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
     {
       char idBuf[64], addBuf[4096], rmBuf[4096];
       int ni = mg_http_get_var(&hm->query, "id", idBuf, sizeof(idBuf));
-      if (ni <= 0) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"missing id\"}\n"); return; }
-      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"invalid id\"}\n"); return; }
+      if (ni <= 0) { reply_json(c, 400, "{\"error\":\"missing id\"}\n"); return; }
+      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { reply_json(c, 400, "{\"error\":\"invalid id\"}\n"); return; }
       stardust::SetNodeLabelsParams in{}; in.id = id;
       int na = mg_http_get_var(&hm->query, "add", addBuf, sizeof(addBuf));
       if (na > 0)
@@ -404,7 +417,7 @@ namespace stardust::http
         for (auto p : parts) in.removeLabels.push_back(st->store->getOrCreateLabelId({std::string(p.buf, p.len), false}));
       }
       st->store->setNodeLabels(in);
-      mg_http_reply(c, 200, "Content-Type: application/json\r\n", "{\"ok\":true}\n");
+      reply_json(c, 200, "{\"ok\":true}\n");
     }
 
     static void parse_kv_list(const mg_str &s, std::vector<std::pair<mg_str, mg_str>> &out)
@@ -441,8 +454,8 @@ namespace stardust::http
     {
       char idBuf[64], setHotBuf[4096], setColdBuf[4096], unsetBuf[4096];
       int ni = mg_http_get_var(&hm->query, "id", idBuf, sizeof(idBuf));
-      if (ni <= 0) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"missing id\"}\n"); return; }
-      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"invalid id\"}\n"); return; }
+      if (ni <= 0) { reply_json(c, 400, "{\"error\":\"missing id\"}\n"); return; }
+      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { reply_json(c, 400, "{\"error\":\"invalid id\"}\n"); return; }
       stardust::UpsertNodePropsParams in{}; in.id = id;
       int nsh = mg_http_get_var(&hm->query, "setHot", setHotBuf, sizeof(setHotBuf));
       if (nsh > 0)
@@ -473,7 +486,7 @@ namespace stardust::http
         for (auto p : parts) in.unsetKeys.push_back(st->store->getOrCreatePropKeyId({std::string(p.buf, p.len), false}));
       }
       st->store->upsertNodeProps(in);
-      mg_http_reply(c, 200, "Content-Type: application/json\r\n", "{\"ok\":true}\n");
+      reply_json(c, 200, "{\"ok\":true}\n");
     }
 
     static void handle_upsert_vector(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
@@ -481,8 +494,8 @@ namespace stardust::http
       char idBuf[64], tagBuf[256], dimBuf[32], dataBuf[32768], dataB64Buf[65536];
       int ni = mg_http_get_var(&hm->query, "id", idBuf, sizeof(idBuf));
       int nt = mg_http_get_var(&hm->query, "tag", tagBuf, sizeof(tagBuf));
-      if (ni <= 0 || nt <= 0) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"missing id/tag\"}\n"); return; }
-      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"invalid id\"}\n"); return; }
+      if (ni <= 0 || nt <= 0) { reply_json(c, 400, "{\"error\":\"missing id/tag\"}\n"); return; }
+      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { reply_json(c, 400, "{\"error\":\"invalid id\"}\n"); return; }
       std::string tag(tagBuf, (size_t)nt);
       stardust::UpsertVectorParams in{}; in.id = id;
       stardust::VectorF32 vec{};
@@ -504,8 +517,8 @@ namespace stardust::http
       else if (nd_b64 > 0)
       {
         int nd = mg_http_get_var(&hm->query, "dim", dimBuf, sizeof(dimBuf));
-        if (nd <= 0) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"missing dim for data_b64\"}\n"); return; }
-        uint32_t dim{}; if (!parseUint32(mg_str_n(dimBuf, (size_t)nd), dim)) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"invalid dim\"}\n"); return; }
+        if (nd <= 0) { reply_json(c, 400, "{\"error\":\"missing dim for data_b64\"}\n"); return; }
+        uint32_t dim{}; if (!parseUint32(mg_str_n(dimBuf, (size_t)nd), dim)) { reply_json(c, 400, "{\"error\":\"invalid dim\"}\n"); return; }
         vec.dim = (uint16_t)dim;
         std::string b64(dataB64Buf, (size_t)nd_b64);
         // Decoded size at most 3/4 of base64 length
@@ -516,14 +529,14 @@ namespace stardust::http
       }
       else
       {
-        mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"missing data or data_b64\"}\n");
+        reply_json(c, 400, "{\"error\":\"missing data or data_b64\"}\n");
         return;
       }
       std::optional<uint16_t> dimOpt; if (vec.dim != 0) dimOpt = vec.dim;
       in.tagId = st->store->getOrCreateVecTagId({tag, true, dimOpt});
       in.vector = std::move(vec);
       st->store->upsertVector(in);
-      mg_http_reply(c, 200, "Content-Type: application/json\r\n", "{\"ok\":true}\n");
+      reply_json(c, 200, "{\"ok\":true}\n");
     }
 
     static void handle_delete_vector(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
@@ -531,20 +544,20 @@ namespace stardust::http
       char idBuf[64], tagBuf[256];
       int ni = mg_http_get_var(&hm->query, "id", idBuf, sizeof(idBuf));
       int nt = mg_http_get_var(&hm->query, "tag", tagBuf, sizeof(tagBuf));
-      if (ni <= 0 || nt <= 0) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"missing id/tag\"}\n"); return; }
-      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"invalid id\"}\n"); return; }
+      if (ni <= 0 || nt <= 0) { reply_json(c, 400, "{\"error\":\"missing id/tag\"}\n"); return; }
+      uint64_t id{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id)) { reply_json(c, 400, "{\"error\":\"invalid id\"}\n"); return; }
       std::string tag(tagBuf, (size_t)nt);
       stardust::DeleteVectorParams in{}; in.id = id; in.tagId = st->store->getOrCreateVecTagId({tag, false});
       st->store->deleteVector(in);
-      mg_http_reply(c, 200, "Content-Type: application/json\r\n", "{\"ok\":true}\n");
+      reply_json(c, 200, "{\"ok\":true}\n");
     }
 
     static void handle_update_edge_props(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
     {
       char idBuf[64], setBuf[4096], unsetBuf[4096];
       int ni = mg_http_get_var(&hm->query, "edgeId", idBuf, sizeof(idBuf));
-      if (ni <= 0) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"missing edgeId\"}\n"); return; }
-      uint64_t edgeId{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), edgeId)) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"invalid edgeId\"}\n"); return; }
+      if (ni <= 0) { reply_json(c, 400, "{\"error\":\"missing edgeId\"}\n"); return; }
+      uint64_t edgeId{}; if (!parseUint64(mg_str_n(idBuf, (size_t)ni), edgeId)) { reply_json(c, 400, "{\"error\":\"invalid edgeId\"}\n"); return; }
       stardust::UpdateEdgePropsParams in{}; in.edgeId = edgeId;
       int ns = mg_http_get_var(&hm->query, "set", setBuf, sizeof(setBuf));
       if (ns > 0)
@@ -564,7 +577,7 @@ namespace stardust::http
         for (auto p : parts) in.unsetKeys.push_back(st->store->getOrCreatePropKeyId({std::string(p.buf, p.len), false}));
       }
       st->store->updateEdgeProps(in);
-      mg_http_reply(c, 200, "Content-Type: application/json\r\n", "{\"ok\":true}\n");
+      reply_json(c, 200, "{\"ok\":true}\n");
     }
 
     static void handle_knn(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
@@ -572,7 +585,7 @@ namespace stardust::http
       char tagBuf[256], qBuf[65536], kBuf[32];
       int nt = mg_http_get_var(&hm->query, "tag", tagBuf, sizeof(tagBuf));
       int nq = mg_http_get_var(&hm->query, "q", qBuf, sizeof(qBuf));
-      if (nt <= 0 || nq <= 0) { mg_http_reply(c, 400, "Content-Type: application/json\r\n", "{\"error\":\"missing tag/q\"}\n"); return; }
+      if (nt <= 0 || nq <= 0) { reply_json(c, 400, "{\"error\":\"missing tag/q\"}\n"); return; }
       uint32_t k = 10; int nk = mg_http_get_var(&hm->query, "k", kBuf, sizeof(kBuf)); if (nk > 0) { mg_str ks = mg_str_n(kBuf, (size_t)nk); uint32_t parsed{}; if (parseUint32(ks, parsed)) k = parsed; }
       std::string tag(tagBuf, (size_t)nt);
       std::vector<mg_str> parts; splitCsv(mg_str_n(qBuf, (size_t)nq), parts);
@@ -584,8 +597,8 @@ namespace stardust::http
       }
       stardust::KnnParams in{}; in.tagId = st->store->getOrCreateVecTagId({tag, false}); in.query = std::move(qv); in.k = k;
       auto resv = st->store->knn(in);
-      mg_http_reply(c, 200, "Content-Type: application/json\r\n", "{%m:[%M]}\n",
-                    MG_ESC("hits"), [](mg_pfn_t o, void *a, va_list *ap) -> int {
+      reply_json(c, 200, "{%m:[%M]}\n",
+                 MG_ESC("hits"), [](mg_pfn_t o, void *a, va_list *ap) -> int {
                       const stardust::KnnPair *hits = va_arg(*ap, const stardust::KnnPair *);
                       size_t count = va_arg(*ap, size_t);
                       mg_xprintf(o, a, "");
@@ -594,7 +607,7 @@ namespace stardust::http
                                    MG_ESC("id"), (unsigned long long)hits[i].id,
                                    MG_ESC("score"), hits[i].score);
                       return 0;
-                    }, resv.hits.data(), resv.hits.size());
+                 }, resv.hits.data(), resv.hits.size());
     }
 
     static void ev_handler(struct mg_connection *c, int ev, void *ev_data)
@@ -603,6 +616,18 @@ namespace stardust::http
       {
         auto *hm = (struct mg_http_message *)ev_data;
         auto *st = (ServerState *)c->fn_data;
+
+        // Handle CORS preflight
+        if (strEquals(hm->method, "OPTIONS"))
+        {
+          mg_http_reply(c, 204,
+                        "Access-Control-Allow-Origin: *\r\n"
+                        "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n"
+                        "Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With\r\n"
+                        "Access-Control-Max-Age: 86400\r\n",
+                        "");
+          return;
+        }
 
         if (mg_match(hm->uri, mg_str("/api/health"), NULL))
         {
@@ -684,7 +709,7 @@ namespace stardust::http
           handle_knn(c, st, hm);
           return;
         }
-        mg_http_reply(c, 404, "Content-Type: application/json\r\n", "{\"error\":\"not found\"}\n");
+        reply_json(c, 404, "{\"error\":\"not found\"}\n");
       }
     }
 
