@@ -1,0 +1,29 @@
+{
+  "name": "stardust",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rimraf dist",
+    "prepare": "pnpm run build"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.3",
+    "rimraf": "^6.0.1"
+  }
+}
+
+

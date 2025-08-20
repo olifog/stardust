@@ -1,13 +1,11 @@
 import { useEffect, useState } from "react";
 import type { NodeObject } from "react-force-graph-3d";
-import {
-  type GetVectorsResponse,
-  getNode,
-  getNodeProps,
-  getVectors,
-  type NodePropsResponse,
-  type NodeResponse,
-} from "./stardust";
+import type {
+  GetVectorsResponse,
+  NodePropsResponse,
+  NodeResponse,
+} from "stardust";
+import { client } from "./graph-viewer";
 
 export const NodeDetails = ({
   node,
@@ -22,7 +20,7 @@ export const NodeDetails = ({
   const [nodeData, setNodeData] = useState<NodeResponse | null>(null);
   const [propsData, setPropsData] = useState<NodePropsResponse | null>(null);
   const [vectorsData, setVectorsData] = useState<GetVectorsResponse | null>(
-    null
+    null,
   );
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -33,16 +31,16 @@ export const NodeDetails = ({
       setError(null);
       try {
         const [n, p, v] = await Promise.all([
-          getNode(nodeId),
-          getNodeProps(nodeId),
-          getVectors(nodeId),
+          client.getNode(nodeId),
+          client.getNodeProps(nodeId),
+          client.getVectors(nodeId),
         ]);
         setNodeData(n);
         setPropsData(p);
         setVectorsData(v);
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Failed to load node details"
+          err instanceof Error ? err.message : "Failed to load node details",
         );
       } finally {
         setLoading(false);

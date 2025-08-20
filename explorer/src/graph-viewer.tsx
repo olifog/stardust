@@ -3,10 +3,12 @@ import ForceGraph3D, {
   type ForceGraphMethods,
   type NodeObject,
 } from "react-force-graph-3d";
+import type { NodeHeader } from "stardust";
+import { StardustClient } from "stardust";
+import * as THREE from "three";
+import SpriteText from "three-spritetext";
 import { NodeDetails } from "./node-details";
 import { NodeSearch } from "./node-search";
-import type { Edge, NodeHeader } from "./stardust";
-import { getNodeWithNeighbours } from "./stardust";
 
 // interface Node {
 // 	id: string;
@@ -21,24 +23,49 @@ import { getNodeWithNeighbours } from "./stardust";
 // 	target: string;
 // }
 
+export const client = new StardustClient({
+  baseUrl: "http://localhost:8080",
+});
+
 export const GraphViewer = () => {
   const fgRef = useRef<ForceGraphMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
   const [selectedNode, setSelectedNode] = useState<NodeObject | null>(null);
 
   const [nodes, setNodes] = useState<Record<string, NodeHeader>>({});
-  const [edges, setEdges] = useState<Record<string, Edge>>({});
+  interface VizEdge {
+    id: number;
+    src: number;
+    dst: number;
+    type?: string;
+  }
+  const [edges, setEdges] = useState<Record<string, VizEdge>>({});
 
   const graphData = useMemo(() => {
     return {
-      nodes: Object.values(nodes).map((node) => ({
-        id: node.id.toString(),
-        name: node.id.toString(),
-        val: 1,
-      })),
+      nodes: Object.values(nodes).map((node) => {
+        const isMovie = node.labels?.some((l) => l.toLowerCase() === "movie");
+        const maybeTitle = isMovie ? node.hotProps?.title : undefined;
+        const maybeName = node.hotProps?.name;
+        const displayNameCandidate =
+          typeof maybeTitle === "string" && maybeTitle.trim().length > 0
+            ? maybeTitle
+            : typeof maybeName === "string" && maybeName.trim().length > 0
+              ? maybeName
+              : undefined;
+        const name = displayNameCandidate ?? node.id.toString();
+        return {
+          id: node.id.toString(),
+          name,
+          labels: node.labels.join(", "),
+          val: 1,
+        };
+      }),
       links: Object.values(edges).map((edge) => ({
         source: edge.src.toString(),
         target: edge.dst.toString(),
+        type: edge.type,
+        id: edge.id,
       })),
     };
   }, [nodes, edges]);
@@ -79,36 +106,97 @@ export const GraphViewer = () => {
   const addNodeAndNeighbours = useCallback(
     async (id: number): Promise<NodeHeader | undefined> => {
       try {
-        const {
-          node,
-          neighbourHeaders,
-          edges: neighbourEdges,
-        } = await getNodeWithNeighbours(id, { direction: "both", limit: 64 });
+        const [{ header }, { items }] = await Promise.all([
+          client.getNode(id),
+          client.adjacency({ node: id, direction: "both", limit: 64 }),
+        ]);
+
+        const neighbourIds = Array.from(
+          new Set(items.map((row) => row.neighbor)),
+        );
+        const neighbourHeaders: NodeHeader[] = [];
+        await Promise.all(
+          neighbourIds.map(async (nid) => {
+            try {
+              const res = await client.getNode(nid);
+              neighbourHeaders.push(res.header);
+            } catch {
+              // ignore
+            }
+          }),
+        );
 
         setNodes((prev) => {
-          const next: Record<string, NodeHeader> = { ...prev };
-          next[node.id.toString()] = node;
-          for (const nh of neighbourHeaders) {
-            next[nh.id.toString()] = nh;
+          let next: Record<string, NodeHeader> = prev;
+          let changed = false;
+
+          const headerKey = header.id.toString();
+          if (!prev[headerKey]) {
+            if (!changed) next = { ...prev };
+            next[headerKey] = header;
+            changed = true;
           }
-          return next;
+
+          for (const nh of neighbourHeaders) {
+            const key = nh.id.toString();
+            if (!prev[key]) {
+              if (!changed) next = { ...prev };
+              next[key] = nh;
+              changed = true;
+            }
+          }
+
+          return changed ? next : prev;
         });
 
         setEdges((prev) => {
-          const next: Record<string, Edge> = { ...prev };
-          for (const e of neighbourEdges) {
-            const key = `${e.src}-${e.dst}`;
-            next[key] = e;
+          let next: Record<string, VizEdge> = prev;
+          let changed = false;
+          for (const row of items) {
+            const src = row.direction === "in" ? row.neighbor : id;
+            const dst = row.direction === "in" ? id : row.neighbor;
+            const ve: VizEdge = { id: row.edgeId, src, dst, type: row.type };
+            const key = String(ve.id);
+            if (!prev[key]) {
+              if (!changed) next = { ...prev };
+              next[key] = ve;
+              changed = true;
+            }
           }
-          return next;
+          return changed ? next : prev;
         });
 
-        return node;
+        return header;
       } catch (err) {
         console.error("Failed to load node/neighbours", err);
       }
     },
-    []
+    [],
+  );
+
+  const centerNodeWithoutRotation = useCallback(
+    (coords: { x: number; y: number; z: number }, duration = 1000) => {
+      const fg = fgRef.current;
+      if (!fg) return;
+
+      const camera = fg.camera();
+      type MinimalOrbitControls = { target: THREE.Vector3 };
+      const controls = fg.controls() as unknown as MinimalOrbitControls;
+      if (!camera || !controls) return;
+
+      const oldTarget = controls.target.clone();
+      const delta = new THREE.Vector3(coords.x, coords.y, coords.z).sub(
+        oldTarget,
+      );
+      const newPos = camera.position.clone().add(delta);
+
+      fg.cameraPosition(
+        { x: newPos.x, y: newPos.y, z: newPos.z },
+        { x: coords.x, y: coords.y, z: coords.z },
+        duration,
+      );
+    },
+    [],
   );
 
   const handleNodeClick = useCallback(
@@ -122,21 +210,12 @@ export const GraphViewer = () => {
         input.y != null &&
         input.z != null
       ) {
-        const x = input.x;
-        const y = input.y;
-        const z = input.z;
-        const distance = 200;
-        const distRatio = 1 + distance / Math.hypot(x, y, z);
-        fgRef.current?.cameraPosition(
-          { x: x * distRatio, y: y * distRatio, z: z * distRatio },
-          { x, y, z },
-          1000
-        );
+        centerNodeWithoutRotation({ x: input.x, y: input.y, z: input.z }, 3000);
       } else {
         setPendingFocusId(id);
       }
     },
-    [addNodeAndNeighbours]
+    [addNodeAndNeighbours, centerNodeWithoutRotation],
   );
 
   useEffect(() => {
@@ -148,14 +227,7 @@ export const GraphViewer = () => {
       if (cancelled) return;
       const coords = nodeCoordsRef.current[focusId.toString()];
       if (coords) {
-        const { x, y, z } = coords;
-        const distance = 200;
-        const distRatio = 1 + distance / Math.hypot(x, y, z);
-        fgRef.current?.cameraPosition(
-          { x: x * distRatio, y: y * distRatio, z: z * distRatio },
-          { x, y, z },
-          1000
-        );
+        centerNodeWithoutRotation(coords, 1000);
         setPendingFocusId(null);
         return;
       }
@@ -170,7 +242,7 @@ export const GraphViewer = () => {
     return () => {
       cancelled = true;
     };
-  }, [pendingFocusId]);
+  }, [pendingFocusId, centerNodeWithoutRotation]);
 
   return (
     <div ref={containerRef} className="relative w-full h-full">
@@ -180,8 +252,45 @@ export const GraphViewer = () => {
         height={height}
         ref={fgRef}
         graphData={graphData}
-        nodeLabel="id"
-        nodeAutoColorBy="group"
+        nodeLabel="name"
+        nodeAutoColorBy="labels"
+        nodeThreeObjectExtend
+        nodeThreeObject={(node: NodeObject) => {
+          const anyNode = node as unknown as {
+            id?: string | number;
+            name?: string;
+            color?: string;
+            labels?: string[];
+          };
+          const text = anyNode.name ?? String(anyNode.id ?? "");
+          const sprite = new SpriteText(text);
+          if (anyNode.color) sprite.color = anyNode.color;
+          sprite.textHeight = 2;
+          sprite.center.y = -2.5;
+          return sprite as unknown as THREE.Object3D;
+        }}
+        linkThreeObjectExtend
+        linkThreeObject={(link: unknown) => {
+          const anyLink = link as { type?: string };
+          const label = anyLink.type ?? "";
+          const sprite = new SpriteText(label);
+          sprite.color = "lightgrey";
+          sprite.textHeight = 1.5;
+          return sprite as unknown as THREE.Object3D;
+        }}
+        linkPositionUpdate={(
+          sprite: unknown,
+          pos: {
+            start: { x: number; y: number; z: number };
+            end: { x: number; y: number; z: number };
+          },
+        ) => {
+          const s = sprite as { position: { x: number; y: number; z: number } };
+          const { start, end } = pos;
+          s.position.x = start.x + (end.x - start.x) / 2;
+          s.position.y = start.y + (end.y - start.y) / 2;
+          s.position.z = start.z + (end.z - start.z) / 2;
+        }}
         onNodeClick={(node) => void handleNodeClick(node)}
         nodePositionUpdate={(_, coords, node) => {
           if (node.id != null) {

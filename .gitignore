@@ -7,4 +7,6 @@ __pycache__/
 build-linux
 .venv
 .mypy_cache
+node_modules/
+dist/
 .ruff_cache

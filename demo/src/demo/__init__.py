@@ -53,7 +53,7 @@ async def main_async() -> None:
             labels=["Movie"],
             hot_props={"title": title, "year": year},
         )
-        movies[title] = int(res["node"]["id"])  # type: ignore[index]
+        movies[title] = int(res["node"]["id"])
 
     print("Creating relationships ...")
     # ACTED_IN
