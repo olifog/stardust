@@ -46,6 +46,11 @@ namespace stardust::rpc
       case Value::TEXT:
       {
         auto t = v.getText();
+        // Avoid creating text-id entries for empty strings; store as raw bytes instead
+        if (t.size() == 0)
+        {
+          return std::string();
+        }
         std::string s(t.cStr());
         uint32_t id = store.getOrCreateTextId(s, createIfMissing);
         return id;
@@ -53,6 +58,11 @@ namespace stardust::rpc
       case Value::BYTES:
       {
         auto d = v.getBytes();
+        if (d.size() == 0)
+        {
+          // Preserve empties as bytes; do not attempt UTF-8/text-id path
+          return std::string();
+        }
         const char *ptr = reinterpret_cast<const char *>(d.begin());
         size_t len = d.size();
         if (isValidUtf8(ptr, len))
@@ -391,21 +401,7 @@ namespace stardust::rpc
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> StardustImpl::getEdgeHeader(GetEdgeHeaderContext ctx)
-  {
-    auto p = ctx.getParams();
-    auto params = p.getParams();
-    stardust::GetEdgeParams in{};
-    in.edgeId = params.getEdgeId();
-    auto r = store_.getEdgeHeader(in);
-    auto res = ctx.getResults();
-    auto out = res.initResult();
-    out.setId(r.ref.id);
-    out.setSrc(r.ref.src);
-    out.setDst(r.ref.dst);
-    out.setType(store_.getRelTypeName(r.typeId));
-    return kj::READY_NOW;
-  }
+  
 
   kj::Promise<void> StardustImpl::getEdgeProps(GetEdgePropsContext ctx)
   {
@@ -645,10 +641,22 @@ namespace stardust::rpc
     in.edgeId = params.getEdgeId();
     auto edge = store_.getEdge(in);
     auto res = ctx.getResults();
-    auto out = res.initEdge();
-    out.setId(edge.id);
-    out.setSrc(edge.src);
-    out.setDst(edge.dst);
+    auto outEdge = res.initEdge();
+    outEdge.setId(edge.id);
+    outEdge.setSrc(edge.src);
+    outEdge.setDst(edge.dst);
+    // Populate meta: type + props
+    auto outMeta = res.initMeta();
+    {
+      uint32_t typeId = store_.getEdgeTypeId(edge);
+      outMeta.setType(store_.getRelTypeName(typeId));
+    }
+    {
+      auto propsRes = store_.getEdgeProps(stardust::GetEdgePropsParams{.edgeId = edge.id});
+      auto props = outMeta.initProps(propsRes.props.size());
+      for (uint32_t i = 0; i < propsRes.props.size(); ++i)
+        toRpcProperty(props[i], propsRes.props[i], store_);
+    }
     return kj::READY_NOW;
   }
 

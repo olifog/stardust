@@ -387,29 +387,7 @@ namespace stardust::http
       reply_json(c, 200, "{%m:[%M]}\n", MG_ESC("items"), print_adjacencies, &pctx);
     }
 
-    static void handle_edge_header(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
-    {
-      char idBuf[64];
-      int ni = mg_http_get_var(&hm->query, "edgeId", idBuf, sizeof(idBuf));
-      if (ni <= 0)
-      {
-        reply_json(c, 400, "{\"error\":\"missing edgeId\"}\n");
-        return;
-      }
-      uint64_t id{};
-      if (!parseUint64(mg_str_n(idBuf, (size_t)ni), id))
-      {
-        reply_json(c, 400, "{\"error\":\"invalid edgeId\"}\n");
-        return;
-      }
-      auto r = st->store->getEdgeHeader(stardust::GetEdgeParams{.edgeId = id});
-      std::string typeName = st->store->getRelTypeName(r.typeId);
-      reply_json(c, 200, "{%m:%llu,%m:%llu,%m:%llu,%m:%m}\n",
-                 MG_ESC("id"), (unsigned long long)r.ref.id,
-                 MG_ESC("src"), (unsigned long long)r.ref.src,
-                 MG_ESC("dst"), (unsigned long long)r.ref.dst,
-                 MG_ESC("type"), MG_ESC(typeName.c_str()));
-    }
+    // removed edge_header; getEdge now returns type and props
 
     static void handle_edge_props(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
     {
@@ -593,11 +571,16 @@ namespace stardust::http
         return;
       }
       auto edge = st->store->getEdge(stardust::GetEdgeParams{.edgeId = id});
+      uint32_t typeId = st->store->getEdgeTypeId(edge);
+      std::string typeName = st->store->getRelTypeName(typeId);
+      auto propsRes = st->store->getEdgeProps(stardust::GetEdgePropsParams{.edgeId = id});
       reply_json(c, 200,
-                 "{%m:%llu,%m:%llu,%m:%llu}\n",
+                 "{%m:%llu,%m:%llu,%m:%llu,%m:%m,%m:%M}\n",
                  MG_ESC("id"), (unsigned long long)edge.id,
                  MG_ESC("src"), (unsigned long long)edge.src,
-                 MG_ESC("dst"), (unsigned long long)edge.dst);
+                 MG_ESC("dst"), (unsigned long long)edge.dst,
+                 MG_ESC("type"), MG_ESC(typeName.c_str()),
+                 MG_ESC("props"), print_props_object, propsRes.props.data(), propsRes.props.size(), st->store);
     }
 
     static void handle_delete_node(struct mg_connection *c, ServerState *st, struct mg_http_message *hm)
@@ -1004,12 +987,7 @@ namespace stardust::http
           handle_adjacency(c, st, hm);
           return;
         }
-        if (strEquals(hm->method, "GET") && mg_match(hm->uri, mg_str("/api/edgeHeader"), NULL))
-        {
-          KJ_LOG(INFO, "dispatch: /api/edgeHeader GET");
-          handle_edge_header(c, st, hm);
-          return;
-        }
+        // /api/edgeHeader removed; consolidated into /api/edge
         if (strEquals(hm->method, "GET") && mg_match(hm->uri, mg_str("/api/edgeProps"), NULL))
         {
           KJ_LOG(INFO, "dispatch: /api/edgeProps GET");

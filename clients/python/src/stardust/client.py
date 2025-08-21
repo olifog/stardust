@@ -224,12 +224,13 @@ class StardustClient:
         res = await req.send()
         return cast(dict[str, Any], res.to_dict()['result'])
 
-    async def get_edge_header(self, edge_id: int) -> dict[str, Any]:
-        req = self._svc.getEdgeHeader_request()
+    async def get_edge(self, edge_id: int) -> dict[str, Any]:
+        req = self._svc.getEdge_request()
         params = req.init("params")
         params.edgeId = edge_id
         res = await req.send()
-        return cast(dict[str, Any], res.to_dict()['result'])
+        # merged response: { edge: {id,src,dst}, meta: {type, props:[...] } }
+        return cast(dict[str, Any], res.to_dict())
 
     async def list_adjacency(self, node: int, direction: str = "both", limit: int = 100) -> dict[str, Any]:
         req = self._svc.listAdjacency_request()

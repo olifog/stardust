@@ -91,7 +91,7 @@ export class StardustClient {
 
   getEdge = async (edgeId: number) => {
     const q = this.http.buildQuery({ edgeId });
-    return this.http.getJson<Edge>(`/api/edge${q}`);
+    return this.http.getJson<Edge & { type: string; props: Record<string, JsonValue> }>(`/api/edge${q}`);
   };
 
   updateEdgeProps = async (params: {

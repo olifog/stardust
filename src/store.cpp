@@ -1286,43 +1286,38 @@ namespace stardust
     return ref;
   }
 
-  GetEdgeHeaderResult Store::getEdgeHeader(const GetEdgeParams &params)
+  uint32_t Store::getEdgeTypeId(const EdgeRef &ref)
   {
-    GetEdgeHeaderResult out{};
-    out.ref = getEdge(params);
-    // discover typeId by scanning one index for the edgeId suffix
+    // Discover typeId by scanning the src-type index for matching edge id
     Txn tx(env_.raw(), false);
     uint32_t foundType = 0;
+    MDB_cursor *cur{};
+    int rc = mdb_cursor_open(tx.get(), env_.edgesBySrcType(), &cur);
+    if (rc)
+      throw MdbError(mdb_strerror(rc));
+    std::string start = key_edge_by_src_type_be(ref.src, 0, 0, 0);
+    MDB_val ck{start.size(), const_cast<char *>(start.data())}, cv{};
+    rc = mdb_cursor_get(cur, &ck, &cv, MDB_SET_RANGE);
+    while (rc == 0)
     {
-      MDB_cursor *cur{};
-      int rc = mdb_cursor_open(tx.get(), env_.edgesBySrcType(), &cur);
-      if (rc)
-        throw MdbError(mdb_strerror(rc));
-      std::string start = key_edge_by_src_type_be(out.ref.src, 0, 0, 0);
-      MDB_val ck{start.size(), const_cast<char *>(start.data())}, cv{};
-      rc = mdb_cursor_get(cur, &ck, &cv, MDB_SET_RANGE);
-      while (rc == 0)
+      const unsigned char *kb = static_cast<const unsigned char *>(ck.mv_data);
+      if (ck.mv_size < 8 + 4 + 8 + 8)
+        break;
+      uint64_t src = read_be64(kb + 0);
+      if (src != ref.src)
+        break;
+      uint32_t typeId = read_be32(kb + 8);
+      uint64_t dst = read_be64(kb + 12);
+      uint64_t eid = read_be64(kb + 20);
+      if (dst == ref.dst && eid == ref.id)
       {
-        const unsigned char *kb = static_cast<const unsigned char *>(ck.mv_data);
-        if (ck.mv_size < 8 + 4 + 8 + 8)
-          break;
-        uint64_t src = read_be64(kb + 0);
-        if (src != out.ref.src)
-          break;
-        uint32_t typeId = read_be32(kb + 8);
-        uint64_t dst = read_be64(kb + 12);
-        uint64_t eid = read_be64(kb + 20);
-        if (dst == out.ref.dst && eid == out.ref.id)
-        {
-          foundType = typeId;
-          break;
-        }
-        rc = mdb_cursor_get(cur, &ck, &cv, MDB_NEXT);
+        foundType = typeId;
+        break;
       }
-      mdb_cursor_close(cur);
+      rc = mdb_cursor_get(cur, &ck, &cv, MDB_NEXT);
     }
-    out.typeId = foundType;
-    return out;
+    mdb_cursor_close(cur);
+    return foundType;
   }
 
   GetEdgePropsResult Store::getEdgeProps(const GetEdgePropsParams &params)

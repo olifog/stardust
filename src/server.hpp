@@ -20,7 +20,6 @@ namespace stardust::rpc
     kj::Promise<void> addEdge(AddEdgeContext ctx) override;
     kj::Promise<void> updateEdgeProps(UpdateEdgePropsContext ctx) override;
     kj::Promise<void> listAdjacency(ListAdjacencyContext ctx) override;
-    kj::Promise<void> getEdgeHeader(GetEdgeHeaderContext ctx) override;
     kj::Promise<void> getEdgeProps(GetEdgePropsContext ctx) override;
     kj::Promise<void> scanNodesByLabel(ScanNodesByLabelContext ctx) override;
     kj::Promise<void> degree(DegreeContext ctx) override;

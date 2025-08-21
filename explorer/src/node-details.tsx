@@ -9,12 +9,12 @@ import { client } from "./graph-viewer";
 
 export const NodeDetails = ({
   node,
-  onLoadNeighbours,
   onClose,
+  onRefocus,
 }: {
   node: NodeObject;
-  onLoadNeighbours: (id: number) => void;
   onClose: () => void;
+  onRefocus: (id: number) => void;
 }) => {
   const nodeId = Number(node.id);
   const [nodeData, setNodeData] = useState<NodeResponse | null>(null);
@@ -114,9 +114,9 @@ export const NodeDetails = ({
         <button
           type="button"
           className="px-3 py-1 rounded bg-white/20 hover:bg-white/30 text-white"
-          onClick={() => onLoadNeighbours(nodeId)}
+          onClick={() => onRefocus(nodeId)}
         >
-          Load neighbours
+          Refocus
         </button>
       </div>
     </div>

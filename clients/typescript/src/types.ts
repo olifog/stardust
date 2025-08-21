@@ -38,6 +38,11 @@ export interface Edge {
   dst: number;
 }
 
+export interface EdgeMeta {
+  type: string;
+  props: Record<string, JsonValue>;
+}
+
 export interface AdjacencyRow {
   neighbor: number;
   edgeId: number;

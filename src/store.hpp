@@ -159,11 +159,6 @@ namespace stardust
     std::vector<Adjacency> items;
   };
 
-  struct GetEdgeHeaderResult
-  {
-    EdgeRef ref{}; // {id, src, dst}
-    uint32_t typeId{0};
-  };
 
   struct GetEdgePropsParams
   {
@@ -283,7 +278,7 @@ namespace stardust
     GetNodePropsResult getNodeProps(const GetNodePropsParams &params);
     GetVectorsResult getVectors(const GetVectorsParams &params);
     EdgeRef getEdge(const GetEdgeParams &params);
-    GetEdgeHeaderResult getEdgeHeader(const GetEdgeParams &params);
+    uint32_t getEdgeTypeId(const EdgeRef &ref);
     GetEdgePropsResult getEdgeProps(const GetEdgePropsParams &params);
     ScanNodesByLabelResult scanNodesByLabel(const ScanNodesByLabelParams &params);
     DegreeResult degree(const DegreeParams &params);

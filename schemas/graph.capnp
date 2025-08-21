@@ -167,13 +167,6 @@ struct GetVectorsResult { vectors @0 :List(TaggedVector); }
 
 struct GetEdgeParams { edgeId @0 :UInt64; }
 
-struct GetEdgeHeader {
-  id  @0 :UInt64;
-  src @1 :UInt64;
-  dst @2 :UInt64;
-  type @3 :Text;
-}
-
 struct GetEdgePropsResult { props @0 :List(Property); }
 
 struct ScanNodesByLabelResult { nodeIds @0 :List(UInt64); }
@@ -203,13 +196,12 @@ interface Stardust {
   getNode         @10 (params :GetNodeParams) -> (result :GetNodeResult);
   getNodeProps    @11 (params :GetNodePropsParams) -> (result :GetNodePropsResult);
   getVectors      @12 (params :GetVectorsParams) -> (result :GetVectorsResult);
-  getEdge         @13 (params :GetEdgeParams) -> (edge :EdgeRef);
-  getEdgeHeader   @16 (params :GetEdgeParams) -> (result :GetEdgeHeader);
-  getEdgeProps    @17 (edgeId :UInt64, keys :List(Text)) -> (result :GetEdgePropsResult);
-  scanNodesByLabel @18 (label :Text, limit :UInt32) -> (result :ScanNodesByLabelResult);
-  degree          @19 (node :UInt64, direction :Direction) -> (result :DegreeResult);
+  getEdge         @13 (params :GetEdgeParams) -> (edge :EdgeRef, meta :EdgeMeta);
+  getEdgeProps    @14 (edgeId :UInt64, keys :List(Text)) -> (result :GetEdgePropsResult);
+  scanNodesByLabel @15 (label :Text, limit :UInt32) -> (result :ScanNodesByLabelResult);
+  degree          @16 (node :UInt64, direction :Direction) -> (result :DegreeResult);
 
   # Deletes
-  deleteNode      @14 (params :DeleteNodeParams);
-  deleteEdge      @15 (params :DeleteEdgeParams);
+  deleteNode      @17 (params :DeleteNodeParams);
+  deleteEdge      @18 (params :DeleteEdgeParams);
 }
