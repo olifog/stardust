@@ -280,6 +280,26 @@ namespace stardust::http
       return 0;
     }
 
+    static int print_knn_hits(mg_pfn_t out, void *arg, va_list *ap)
+    {
+      const stardust::KnnPair *hits = va_arg(*ap, const stardust::KnnPair *);
+      size_t count = va_arg(*ap, size_t);
+      if (hits == nullptr)
+      {
+        KJ_LOG(ERROR, "print_knn_hits: null hits pointer");
+        mg_xprintf(out, arg, "");
+        return 0;
+      }
+      mg_xprintf(out, arg, "");
+      for (size_t i = 0; i < count; ++i)
+      {
+        mg_xprintf(out, arg, "%s{%m:%llu,%m:%g}", i ? "," : "",
+                   MG_ESC("id"), (unsigned long long)hits[i].id,
+                   MG_ESC("score"), (double)hits[i].score);
+      }
+      return 0;
+    }
+
     // Common reply helper that adds CORS headers to JSON responses
     template <typename... Args>
     static void reply_json(struct mg_connection *c, int code, const char *fmt, Args &&...args)
@@ -917,6 +937,11 @@ namespace stardust::http
       stardust::VectorF32 qv{};
       qv.dim = (uint16_t)parts.size();
       qv.data.reserve(parts.size() * 4);
+      if (qv.dim == 0)
+      {
+        reply_json(c, 400, "{\"error\":\"empty query vector\"}\n");
+        return;
+      }
       for (auto p : parts)
       {
         std::string s(p.buf, p.len);
@@ -925,20 +950,12 @@ namespace stardust::http
         qv.data.append(fb, sizeof(float));
       }
       stardust::KnnParams in{};
-      in.tagId = st->store->getOrCreateVecTagId({tag, false});
+      uint32_t vecTagId = st->store->getOrCreateVecTagId({tag, false});
+      in.tagId = vecTagId;
       in.query = std::move(qv);
       in.k = k;
       auto resv = st->store->knn(in);
-      reply_json(c, 200, "{%m:[%M]}\n", MG_ESC("hits"), [](mg_pfn_t o, void *a, va_list *ap) -> int
-                 {
-                      const stardust::KnnPair *hits = va_arg(*ap, const stardust::KnnPair *);
-                      size_t count = va_arg(*ap, size_t);
-                      mg_xprintf(o, a, "");
-                      for (size_t i = 0; i < count; ++i)
-                        mg_xprintf(o, a, "%s{%m:%llu,%m:%g}", i ? "," : "",
-                                   MG_ESC("id"), (unsigned long long)hits[i].id,
-                                   MG_ESC("score"), hits[i].score);
-                      return 0; }, resv.hits.data(), resv.hits.size());
+      reply_json(c, 200, "{%m:[%M]}\n", MG_ESC("hits"), print_knn_hits, resv.hits.data(), resv.hits.size());
     }
 
     static void ev_handler(struct mg_connection *c, int ev, void *ev_data)

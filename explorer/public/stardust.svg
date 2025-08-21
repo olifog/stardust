@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Stardust rosette">
+    <g fill="currentColor">
+      <defs>
+        <!-- spike polygon: narrow tip, wide base -->
+        <polygon id="spike" points="122,56 138,56 120,200 120,200"/>
+      </defs>
+  
+      <use href="#spike" transform="rotate(0 128 128)"/>
+      <use href="#spike" transform="rotate(22.5 128 128)"/>
+      <use href="#spike" transform="rotate(45 128 128)"/>
+      <use href="#spike" transform="rotate(67.5 128 128)"/>
+      <use href="#spike" transform="rotate(90 128 128)"/>
+      <use href="#spike" transform="rotate(112.5 128 128)"/>
+      <use href="#spike" transform="rotate(135 128 128)"/>
+      <use href="#spike" transform="rotate(157.5 128 128)"/>
+      <use href="#spike" transform="rotate(180 128 128)"/>
+      <use href="#spike" transform="rotate(202.5 128 128)"/>
+      <use href="#spike" transform="rotate(225 128 128)"/>
+      <use href="#spike" transform="rotate(247.5 128 128)"/>
+      <use href="#spike" transform="rotate(270 128 128)"/>
+      <use href="#spike" transform="rotate(292.5 128 128)"/>
+      <use href="#spike" transform="rotate(315 128 128)"/>
+      <use href="#spike" transform="rotate(337.5 128 128)"/>
+  
+      <circle cx="128" cy="128" r="30"/>
+    </g>
+  </svg>
+  

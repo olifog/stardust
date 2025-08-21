@@ -1,0 +1,31 @@
+[project]
+name = "stardust-mcp"
+version = "0.1.0"
+description = "MCP server exposing Stardust graph/vector DB for GraphRAG"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+  { name = "olifog", email = "oliverfogelin@gmail.com" }
+]
+dependencies = [
+  "fastmcp>=2.11.3",
+  "ollama>=0.3.0",
+  "stardust",
+]
+
+[project.scripts]
+stardust-mcp = "stardust_mcp.server:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+packages = [
+  "src/stardust_mcp",
+]
+
+[tool.uv.sources]
+stardust = { path = "../clients/python", editable = true }
+
+

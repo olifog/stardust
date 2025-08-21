@@ -1,18 +1,22 @@
 
 # stardust
 
-hybrid graph/vector database!!!! WIP
+### ✺
 
-built on top of LMDB, with capnproto for schema/RPC. Minimal HTTP is also available for quick testing.
+lightweight, embeddable hybrid graph/vector database
 
-## build
+built on top of LMDB, queryable over capnproto RPC or an inbuilt HTTP server
+
+## build from source
+
+(install script / docker image coming soon!!!)
 
 ### requirements
 
 - CMake >= 3.30
 - a C++20 compiler
-- Cap'n Proto (capnp, libcapnp-dev)
-- LMDB (liblmdb-dev)
+- Cap'n Proto
+- LMDB
 
 install on macos:
 
@@ -22,19 +26,11 @@ brew install cmake pkg-config capnp lmdb
 
 ### dev with docker compose
 
-Run the server:
-
 ```bash
 docker compose up dev
 ```
 
 - to pass server args: `STARDUST_ARGS="-v -b unix:/tmp/stardust.sock" docker compose up dev`.
-
-Run tests:
-
-```bash
-docker compose run --rm test
-```
 
 args:
 
@@ -43,19 +39,29 @@ args:
 - `-d`: data directory (default: `data`)
 - `-H, --http`: optional HTTP bind, e.g. `http://0.0.0.0:8080` (disabled by default)
 
-to interact with the server, you can use either the capnproto RPC server or the HTTP server.
-see `src/client_example.cpp` for an example, the schema is in `schemas/graph.capnp`.
+run tests:
 
-### HTTP API
+```bash
+docker compose run --rm test
+```
 
-when started with `--http http://0.0.0.0:8080`, a tiny HTTP server is enabled using Mongoose [link](https://github.com/cesanta/mongoose).
+to query the database, you can either communicate over capnproto RPC or the HTTP server. this repo comes with
+two example client libraries consuming both of these channels, the python sdk operating over capnproto and the
+typescript sdk wrapping the http endpoints. for example apps using these two libraries you can check out the `demo`, `mcp`, or `explorer` directories
 
-endpoints:
+check `schemas/graph.capnp` for the RPC spec if you want to write your own client, and `clients/typescript/src/client.ts` for the HTTP spec (openapi schema coming soon !!!)
 
-- `GET /api/health` → `{ "ok": true }`
-- `POST /api/node?labels=LabelA,LabelB` → `{ "id": <u64> }`
-- `POST /api/edge?src=<u64>&dst=<u64>&type=<TypeName>` → `{ "id": <u64> }`
-- `GET /api/neighbors?node=<u64>&direction=out|in|both&limit=<u32>` → `{ "neighbors": [<u64> ...] }`
+### MCP for graphRAG
+
+a basic mcp server implementation is in `mcp`, it can be configured to use either http or stdio transport. an example run command:
+
+```bash
+STARDUST_URL="tcp://127.0.0.1:4000" STARDUST_VECTOR_TAG="plot" uv run stardust-mcp --port 7777    
+```
+
+assuming your stardust db is configured with -b 0.0.0.0:4000
+
+to then use this mcp server in e.g. claude code you can point it to localhost:7777 and use the stardust:answer_with_stardust prompt to actually do graphrag
 
 ## TODO
 
@@ -68,16 +74,17 @@ endpoints:
 - [X] expand out the API, more CRUD + query filters etc.
 - [X] add in http server alternative to capnproto
 - [x] initial python sdk wrapper around capnproto
-- [ ] tidy up http server
-- [ ] add the 4 new http queries to rpc server
-- [ ] initial typescript sdk wrapper around http
-- [ ] add colors to explorer
-- [ ] add embeddings + actual lmdb data for the demo
+- [X] tidy up http server
+- [X] add the 4 new http queries to rpc server
+- [X] initial typescript sdk wrapper around http
+- [X] add colors to explorer
+- [X] add embeddings + actual lmdb data for the demo
 - [ ] add a couple graph algos, betweenness centrality, pathfinding
-- [ ] expose http api as (read only) mcp server
+- [X] expose python sdk as (read only) mcp server
 - [ ] make custom extension to cypher, make a grammar, register queries to precompile them (?)
 - [ ] hnsw index for vector search
 - [ ] configurable similarity metric
+- [ ] actual error handling
 
 longer term:
 

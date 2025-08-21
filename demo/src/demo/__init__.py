@@ -11,7 +11,10 @@ from pathlib import Path
 from typing import Any
 from urllib.request import urlretrieve
 
+import aiohttp
 import capnp
+from dotenv import load_dotenv
+from ollama import Client as OllamaClient
 from stardust import connect
 
 # IMDb dataset sources
@@ -19,6 +22,19 @@ IMDB_TITLE_BASICS_URL = "https://datasets.imdbws.com/title.basics.tsv.gz"
 IMDB_TITLE_PRINCIPALS_URL = "https://datasets.imdbws.com/title.principals.tsv.gz"
 IMDB_NAME_BASICS_URL = "https://datasets.imdbws.com/name.basics.tsv.gz"
 IMDB_TITLE_RATINGS_URL = "https://datasets.imdbws.com/title.ratings.tsv.gz"
+
+load_dotenv()
+OMDB_API_KEY = os.environ.get("OMDB_API_KEY", "")
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "nomic-embed-text:v1.5")
+_OLLAMA_CLIENT: OllamaClient | None = None
+
+
+def _get_ollama_client() -> OllamaClient:
+    global _OLLAMA_CLIENT
+    if _OLLAMA_CLIENT is None:
+        _OLLAMA_CLIENT = OllamaClient(host=OLLAMA_URL)
+    return _OLLAMA_CLIENT
 
 
 @dataclass(frozen=True)
@@ -60,13 +76,6 @@ def _safe_text(value: str | None, max_len: int = 200) -> str:
 
 
 def _find_or_create_data_dir() -> Path:
-    """Locate a `data` directory by walking up from CWD; create if missing.
-
-    Preference order:
-    - STARDUST_DATA_DIR env var
-    - nearest ancestor directory named `data`
-    - `data/` under current working directory
-    """
     env_dir = os.environ.get("STARDUST_DATA_DIR")
     if env_dir:
         path = Path(env_dir).expanduser().resolve()
@@ -118,10 +127,6 @@ def _load_ratings(ratings_path: Path) -> dict[str, tuple[float, int]]:
 
 
 def _load_movies(basics_path: Path, ratings_path: Path, max_movies: int) -> list[Movie]:
-    """Load eligible movies and return the top-N by popularity.
-
-    Popularity heuristic: highest numVotes first, then averageRating, then most recent year.
-    """
     ratings = _load_ratings(ratings_path)
     candidates: list[tuple[int, float, int, str, str, str | None, int | None]] = []
     # (numVotes, avgRating, year, tconst, title, genres, runtimeMinutes)
@@ -158,7 +163,7 @@ def _load_movies(basics_path: Path, ratings_path: Path, max_movies: int) -> list
         genres_str = None if genres == "\\N" else genres
         candidates.append((votes, avg, year, tconst, primary_title, genres_str, rt))
 
-    # Sort by popularity: votes desc, rating desc, year desc
+    # sort by popularity: votes desc, rating desc, year desc
     candidates.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
     top = candidates[:max_movies]
     return [
@@ -179,10 +184,6 @@ def _load_principals(
     principals_path: Path,
     movie_ids: set[str],
 ) -> tuple[dict[str, list[Principal]], dict[str, list[Principal]]]:
-    """Return mapping of tconst -> principals for actors and directors.
-
-    Does not cap counts; preserves IMDb 'ordering' and captures 'characters' and 'job'.
-    """
     actors_by_title: dict[str, list[Principal]] = defaultdict(list)
     directors_by_title: dict[str, list[Principal]] = defaultdict(list)
     for row in _iter_tsv(principals_path):
@@ -200,7 +201,6 @@ def _load_principals(
         def _parse_characters(raw: str) -> str | None:
             if not raw or raw == "\\N":
                 return None
-            # often it's a JSON-like list string; take the first entry if possible
             s = raw.strip()
             if s.startswith("[") and s.endswith("]"):
                 try:
@@ -236,7 +236,9 @@ def _load_principals(
     return actors_by_title, directors_by_title
 
 
-def _load_people(names_path: Path, nconsts: set[str]) -> dict[str, tuple[str, int | None, int | None, tuple[str, ...]]]:
+def _load_people(
+    names_path: Path, nconsts: set[str]
+) -> dict[str, tuple[str, int | None, int | None, tuple[str, ...]]]:
     """Return mapping nconst -> (primaryName, birthYear, deathYear, professions)."""
     needed = set(nconsts)
     result: dict[str, tuple[str, int | None, int | None, tuple[str, ...]]] = {}
@@ -259,7 +261,13 @@ def _load_people(names_path: Path, nconsts: set[str]) -> dict[str, tuple[str, in
             except ValueError:
                 dy = None
             profs: tuple[str, ...] = tuple(
-                p.strip() for p in (primary_profession.split(",") if primary_profession and primary_profession != "\\N" else []) if p.strip()
+                p.strip()
+                for p in (
+                    primary_profession.split(",")
+                    if primary_profession and primary_profession != "\\N"
+                    else []
+                )
+                if p.strip()
             )
             result[nconst] = (primary_name, by, dy, profs)
             if len(result) >= len(needed):
@@ -268,7 +276,7 @@ def _load_people(names_path: Path, nconsts: set[str]) -> dict[str, tuple[str, in
 
 
 async def _bounded_gather(
-    coros: list[asyncio.Future[Any] | asyncio.Task[Any] | Any],
+    coros: list[Any],
     limit: int = 50,
 ) -> list[Any]:
     semaphore = asyncio.Semaphore(limit)
@@ -280,16 +288,51 @@ async def _bounded_gather(
     return await asyncio.gather(*[_wrap(c) for c in coros])
 
 
+async def _fetch_omdb_plot(session: aiohttp.ClientSession, tconst: str) -> str | None:
+    if not OMDB_API_KEY:
+        return None
+    params = {"apikey": OMDB_API_KEY, "i": tconst, "plot": "full", "r": "json"}
+    try:
+        async with session.get(
+            "https://www.omdbapi.com/",
+            params=params,
+            timeout=aiohttp.ClientTimeout(total=20),
+        ) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json()
+    except (TimeoutError, aiohttp.ClientError):
+        return None
+    if not isinstance(data, dict) or data.get("Response") != "True":
+        return None
+    plot = str(data.get("Plot") or "").strip()
+    return plot or None
+
+
+async def _embed_text_ollama(text: str) -> list[float] | None:
+    """Call Ollama Python client for embeddings using a thread to avoid blocking."""
+    def _call() -> list[float] | None:
+        result = _get_ollama_client().embeddings(model=OLLAMA_MODEL, prompt=text)
+        vec = result.embedding
+        return [float(v) for v in vec]
+
+    return await asyncio.to_thread(_call)
+
+
+async def _augment_movie_plot(
+    client: Any, session: aiohttp.ClientSession, movie: Movie, node_id: int
+) -> None:
+    plot = await _fetch_omdb_plot(session, movie.tconst)
+    if not plot:
+        return
+    prompt = f"{movie.title} ({movie.year}) — {plot}"
+    vec = await _embed_text_ollama(prompt)
+    if not vec:
+        return
+    await client.upsert_vector(node_id=node_id, tag="plot", vector=vec)
+
+
 async def main_async() -> None:
-    """Populate a larger movies graph using IMDb datasets.
-
-    Defaults to connecting over the UNIX socket at unix:/tmp/stardust.sock.
-    Override with STARDUST_URL (e.g. "tcp://127.0.0.1:4000").
-
-    Controls:
-    - DEMO_MAX_MOVIES (default 900)
-    - DEMO_MAX_PEOPLE (default 2100)
-    """
     url = os.environ.get("STARDUST_URL", "unix:/tmp/stardust.sock")
     print(f"Connecting to Stardust at {url} ...")
     client: Any = await connect(url)
@@ -305,12 +348,9 @@ async def main_async() -> None:
     _download_if_needed(IMDB_NAME_BASICS_URL, names_gz)
     _download_if_needed(IMDB_TITLE_RATINGS_URL, ratings_gz)
 
-    max_movies = int(os.environ.get("DEMO_MAX_MOVIES", "900"))
-    max_people = int(os.environ.get("DEMO_MAX_PEOPLE", "2100"))
+    max_movies = int(os.environ.get("DEMO_MAX_MOVIES", "500"))
 
-    print(
-        f"Loading up to {max_movies} most popular movies using {basics_gz} + ratings ..."
-    )
+    print(f"Loading up to {max_movies} most popular movies using {basics_gz} + ratings ...")
     movies = _load_movies(basics_gz, ratings_gz, max_movies=max_movies)
     movie_ids = {m.tconst for m in movies}
 
@@ -326,60 +366,12 @@ async def main_async() -> None:
     for principals in directors_by_title.values():
         all_people_ids.update(p.nconst for p in principals)
 
-    # If too many people, cap to top-N weighted by movie popularity
-    if len(all_people_ids) > max_people:
-        # Build movie popularity by numVotes
-        votes_by_title: dict[str, int] = {}
-        for row in _iter_tsv(ratings_gz):
-            if len(row) < 3:
-                continue
-            tconst, _avg, votes_str = row
-            try:
-                votes_by_title[tconst] = int(votes_str)
-            except ValueError:
-                continue
-
-        weight_by_person: dict[str, float] = defaultdict(float)
-        for tconst, principals in actors_by_title.items():
-            weight = float(votes_by_title.get(tconst, 0))
-            if weight <= 0:
-                weight = 1.0
-            for p in principals:
-                weight_by_person[p.nconst] += weight
-        for tconst, principals in directors_by_title.items():
-            weight = float(votes_by_title.get(tconst, 0))
-            if weight <= 0:
-                weight = 1.0
-            for p in principals:
-                weight_by_person[p.nconst] += 2.0 * weight  # weigh directors higher
-
-        top_people = {
-            n
-            for n, _w in sorted(
-                weight_by_person.items(), key=lambda kv: kv[1], reverse=True
-            )[:max_people]
-        }
-        # Filter mappings to only include top people
-        actors_by_title = {
-            t: [p for p in principals if p.nconst in top_people]
-            for t, principals in actors_by_title.items()
-        }
-        directors_by_title = {
-            t: [p for p in principals if p.nconst in top_people]
-            for t, principals in directors_by_title.items()
-        }
-        all_people_ids = top_people
-
-    # Use all available actors and directors (no per-movie caps). Lists are already
-    # filtered by top_people if the global cap applied; otherwise include everyone
-    # present in the names dataset.
     selected_actors_by_title: dict[str, list[Principal]] = actors_by_title
     selected_directors_by_title: dict[str, list[Principal]] = directors_by_title
 
     print(f"Resolving {len(all_people_ids)} people names ...")
     nconst_to_details = _load_people(names_gz, all_people_ids)
 
-    # Build Person structures with role sets
     person_roles: dict[str, set[str]] = defaultdict(set)
     for principals in selected_actors_by_title.values():
         for p in principals:
@@ -406,7 +398,6 @@ async def main_async() -> None:
 
     print(f"Creating {len(movies)} movie nodes and {len(people)} person nodes ...")
 
-    # Create movie nodes
     create_movie_tasks = [
         client.create_node(
             labels=["Movie"],
@@ -427,7 +418,16 @@ async def main_async() -> None:
     for m, res in zip(movies, movie_results, strict=False):
         movie_id_map[m.tconst] = int(res["node"]["id"])  # type: ignore[index]
 
-    # Create person nodes
+    if OMDB_API_KEY:
+        print("Augmenting movies with OMDb plot embeddings via Ollama ...")
+        async with aiohttp.ClientSession() as session:
+            aug_tasks = [
+                _augment_movie_plot(client, session, m, movie_id_map[m.tconst])
+                for m in movies
+                if m.tconst in movie_id_map
+            ]
+            await _bounded_gather(aug_tasks, limit=8)
+
     create_person_tasks = []
     for person in people.values():
         labels = ["Person", *sorted(role for role in person.roles if role != "Person")]

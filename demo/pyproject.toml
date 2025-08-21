@@ -9,6 +9,9 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "stardust",
+    "aiohttp>=3.9.0",
+    "python-dotenv>=1.0.1",
+    "ollama>=0.3.0",
 ]
 
 [project.scripts]
