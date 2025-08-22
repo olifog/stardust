@@ -82,7 +82,7 @@ to then use this mcp server in e.g. claude code you can point it to localhost:77
 - [ ] add a couple graph algos, betweenness centrality, pathfinding
 - [X] expose python sdk as (read only) mcp server
 - [ ] make custom extension to cypher, make a grammar, register queries to precompile them (?)
-- [ ] hnsw index for vector search
+- [X] hnsw index for vector search
 - [ ] configurable similarity metric
 - [ ] actual error handling
 

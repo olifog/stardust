@@ -8,10 +8,154 @@
 #include <cmath>
 #include <limits>
 #include <queue>
+#include <thread>
 #include <kj/debug.h>
 
 namespace stardust
 {
+  Store::~Store() {
+    // HNSW indices will be automatically cleaned up by unique_ptr destructors
+  }
+
+  // -------------------- HNSW index management --------------------
+  void Store::ensureHnswIndex(uint32_t tagId, uint16_t dim) {
+    std::lock_guard<std::mutex> lock(hnswMutex_);
+    
+    if (hnswIndices_.find(tagId) != hnswIndices_.end()) {
+      return;
+    }
+    
+    auto index = std::make_unique<HnswIndex>();
+    index->dim = dim;
+    index->max_elements = 100000;
+    
+    index->space = std::make_unique<hnswlib::InnerProductSpace>(dim);
+    
+    index->index = std::make_unique<hnswlib::HierarchicalNSW<float>>(
+      index->space.get(), index->max_elements, 16, 200);
+    
+    hnswIndices_[tagId] = std::move(index);
+  }
+  
+  void Store::addToHnswIndex(uint32_t tagId, uint64_t nodeId, const float* vector, uint16_t dim) {
+    std::lock_guard<std::mutex> lock(hnswMutex_);
+    
+    auto it = hnswIndices_.find(tagId);
+    if (it == hnswIndices_.end()) {
+      auto index = std::make_unique<HnswIndex>();
+      index->dim = dim;
+      index->max_elements = 100000;
+      index->space = std::make_unique<hnswlib::InnerProductSpace>(dim);
+      index->index = std::make_unique<hnswlib::HierarchicalNSW<float>>(
+        index->space.get(), index->max_elements, 16, 200);
+      hnswIndices_[tagId] = std::move(index);
+      it = hnswIndices_.find(tagId);
+    }
+    
+    auto& hnswIndex = *it->second;
+    
+    auto nodeIt = hnswIndex.nodeToLabel.find(nodeId);
+    if (nodeIt != hnswIndex.nodeToLabel.end()) {
+      // update existing vector
+      hnswlib::labeltype label = nodeIt->second;
+      hnswIndex.index->updatePoint(vector, label, 1.0);
+    } else {
+      // add new vector
+      if (hnswIndex.nextLabel >= hnswIndex.max_elements) {
+        hnswIndex.max_elements *= 2;
+        hnswIndex.index->resizeIndex(hnswIndex.max_elements);
+      }
+      
+      hnswlib::labeltype label = hnswIndex.nextLabel++;
+      hnswIndex.index->addPoint(vector, label);
+      hnswIndex.nodeToLabel[nodeId] = label;
+      hnswIndex.labelToNode[label] = nodeId;
+    }
+  }
+  
+  void Store::removeFromHnswIndex(uint32_t tagId, uint64_t nodeId) {
+    std::lock_guard<std::mutex> lock(hnswMutex_);
+    
+    auto it = hnswIndices_.find(tagId);
+    if (it == hnswIndices_.end()) {
+      return;
+    }
+    
+    auto& hnswIndex = *it->second;
+    auto nodeIt = hnswIndex.nodeToLabel.find(nodeId);
+    if (nodeIt != hnswIndex.nodeToLabel.end()) {
+      hnswlib::labeltype label = nodeIt->second;
+      hnswIndex.index->markDelete(label);
+      hnswIndex.nodeToLabel.erase(nodeIt);
+      hnswIndex.labelToNode.erase(label);
+    }
+  }
+  
+  void Store::rebuildHnswIndex(uint32_t tagId) {
+    std::lock_guard<std::mutex> lock(hnswMutex_);
+    
+    Txn tx(env_.raw(), false);
+    uint16_t dim = 0;
+    {
+      auto mk = key_vec_tag_meta_be(tagId);
+      MDB_val mk0{mk.size(), const_cast<char *>(mk.data())}, mv{};
+      int mrc = mdb_get(tx.get(), env_.vecTagMeta(), &mk0, &mv);
+      if (mrc == 0 && mv.mv_size >= 4) {
+        dim = read_be32(static_cast<const unsigned char *>(mv.mv_data));
+      } else {
+        return;
+      }
+    }
+    
+    auto newIndex = std::make_unique<HnswIndex>();
+    newIndex->dim = dim;
+    newIndex->max_elements = 100000;
+    newIndex->space = std::make_unique<hnswlib::InnerProductSpace>(dim);
+    newIndex->index = std::make_unique<hnswlib::HierarchicalNSW<float>>(
+      newIndex->space.get(), newIndex->max_elements, 16, 200);
+    
+    MDB_cursor *cur{};
+    int rc = mdb_cursor_open(tx.get(), env_.nodeVectors(), &cur);
+    if (rc) {
+      throw MdbError(mdb_strerror(rc));
+    }
+    
+    MDB_val k{}, v{};
+    rc = mdb_cursor_get(cur, &k, &v, MDB_FIRST);
+    while (rc == 0) {
+      if (k.mv_size >= 12) {
+        const unsigned char *kb = static_cast<const unsigned char *>(k.mv_data);
+        uint64_t nodeId = read_be64(kb + 0);
+        uint32_t curTagId = read_be32(kb + 8);
+        
+        if (curTagId == tagId && v.mv_size == static_cast<size_t>(dim) * 4) {
+          const float *vf = reinterpret_cast<const float *>(v.mv_data);
+          
+          std::vector<float> normalized(dim);
+          float norm = 0.0f;
+          for (uint16_t i = 0; i < dim; ++i) {
+            norm += vf[i] * vf[i];
+          }
+          norm = std::sqrt(norm);
+          if (norm > 0.0f) {
+            for (uint16_t i = 0; i < dim; ++i) {
+              normalized[i] = vf[i] / norm;
+            }
+            
+            hnswlib::labeltype label = newIndex->nextLabel++;
+            newIndex->index->addPoint(normalized.data(), label);
+            newIndex->nodeToLabel[nodeId] = label;
+            newIndex->labelToNode[label] = nodeId;
+          }
+        }
+      }
+      rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
+    }
+    mdb_cursor_close(cur);
+    
+    hnswIndices_[tagId] = std::move(newIndex);
+  }
+
   // -------------------- meta helpers (schema, sequences) --------------------
 
   static inline MDB_val make_val_from_str(const std::string &s)
@@ -653,6 +797,21 @@ namespace stardust
     if (rc)
       throw MdbError(mdb_strerror(rc));
     tx.commit();
+    
+    // add to HNSW index after successful commit
+    const float* vf = reinterpret_cast<const float*>(data.data());
+    std::vector<float> normalized(enforcedDim);
+    float norm = 0.0f;
+    for (uint32_t i = 0; i < enforcedDim; ++i) {
+      norm += vf[i] * vf[i];
+    }
+    norm = std::sqrt(norm);
+    if (norm > 0.0f) {
+      for (uint32_t i = 0; i < enforcedDim; ++i) {
+        normalized[i] = vf[i] / norm;
+      }
+      addToHnswIndex(params.tagId, params.id, normalized.data(), static_cast<uint16_t>(enforcedDim));
+    }
   }
 
   void Store::deleteVector(const DeleteVectorParams &params)
@@ -664,6 +823,9 @@ namespace stardust
     if (rc != 0 && rc != MDB_NOTFOUND)
       throw MdbError(mdb_strerror(rc));
     tx.commit();
+    
+    // remove from HNSW index after successful commit
+    removeFromHnswIndex(params.tagId, params.id);
   }
 
   EdgeRef Store::addEdge(const AddEdgeParams &params)
@@ -838,6 +1000,57 @@ namespace stardust
       throw MdbError("query vector byte length must be a multiple of 4");
     uint32_t queryDimFromBytes = static_cast<uint32_t>(qbytes.size() / 4);
 
+    {
+      std::lock_guard<std::mutex> lock(hnswMutex_);
+      auto it = hnswIndices_.find(params.tagId);
+      if (it != hnswIndices_.end() && it->second->index->getCurrentElementCount() > 0) {
+        auto& hnswIndex = *it->second;
+        
+        if (queryDimFromBytes != hnswIndex.dim)
+          throw MdbError("query dimension does not match index dimension");
+        
+        // decode and normalize query vector
+        std::vector<float> q(hnswIndex.dim);
+        const unsigned char *qb = reinterpret_cast<const unsigned char *>(qbytes.data());
+        for (uint32_t i = 0; i < hnswIndex.dim; ++i) {
+          float f{};
+          std::memcpy(&f, qb + i * 4, 4);
+          q[i] = f;
+        }
+        
+        // normalize for cosine similarity (inner product)
+        float qnorm = 0.0f;
+        for (float v : q) {
+          qnorm += v * v;
+        }
+        qnorm = std::sqrt(qnorm);
+        if (qnorm > 0.0f) {
+          for (float& v : q) {
+            v /= qnorm;
+          }
+        }
+        
+        auto result = hnswIndex.index->searchKnn(q.data(), params.k);
+        
+        out.hits.reserve(result.size());
+        while (!result.empty()) {
+          auto [dist, label] = result.top();
+          result.pop();
+          
+          float score = -dist; // hnswlib returns negative inner product
+          
+          auto nodeIt = hnswIndex.labelToNode.find(label);
+          if (nodeIt != hnswIndex.labelToNode.end()) {
+            out.hits.push_back(KnnPair{nodeIt->second, score});
+          }
+        }
+        
+        std::reverse(out.hits.begin(), out.hits.end());
+        return out;
+      }
+    }
+
+    // fall back to brute force if no HNSW index
     Txn tx(env_.raw(), false);
 
     uint32_t dim = 0;
@@ -866,6 +1079,33 @@ namespace stardust
       throw MdbError("provided query dim does not match tagId meta");
     if (queryDimFromBytes != dim)
       throw MdbError("query bytes length does not match expected dim for tagId");
+
+    bool shouldRebuild = false;
+    {
+      uint32_t vecCount = 0;
+      MDB_cursor *cur{};
+      int rc = mdb_cursor_open(tx.get(), env_.nodeVectors(), &cur);
+      if (rc == 0) {
+        MDB_val k{}, v{};
+        rc = mdb_cursor_get(cur, &k, &v, MDB_FIRST);
+        while (rc == 0 && vecCount < 100) { // Check first 100 vectors
+          if (k.mv_size >= 12) {
+            const unsigned char *kb = static_cast<const unsigned char *>(k.mv_data);
+            uint32_t tagId = read_be32(kb + 8);
+            if (tagId == params.tagId) {
+              vecCount++;
+            }
+          }
+          rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
+        }
+        mdb_cursor_close(cur);
+      }
+      
+      // rebuild index if we have enough vectors
+      if (vecCount >= 10) {
+        shouldRebuild = true;
+      }
+    }
 
     // decode query floats once and compute its L2 norm for cosine similarity
     std::vector<float> q;
@@ -962,6 +1202,19 @@ namespace stardust
     out.hits.reserve(results.size());
     for (const auto &c : results)
       out.hits.push_back(KnnPair{c.id, c.score});
+    
+    // trigger async rebuild if needed
+    if (shouldRebuild) {
+      std::thread([this, tagId = params.tagId]() {
+        try {
+          rebuildHnswIndex(tagId);
+          KJ_LOG(INFO, "HNSW index rebuilt for tagId", tagId);
+        } catch (const std::exception& e) {
+          KJ_LOG(ERROR, "Failed to rebuild HNSW index", e.what());
+        }
+      }).detach();
+    }
+    
     return out;
   }
 
@@ -1602,7 +1855,8 @@ namespace stardust
       mdb_cursor_close(cur);
     }
 
-    // delete vectors by range
+    // delete vectors by range and track tagIds for HNSW cleanup
+    std::vector<uint32_t> vectorTagIds;
     {
       MDB_cursor *cur{};
       rc = mdb_cursor_open(tx.get(), env_.nodeVectors(), &cur);
@@ -1619,6 +1873,8 @@ namespace stardust
         uint64_t major = read_be64(kb + 0);
         if (major != params.id)
           break;
+        uint32_t tagId = read_be32(kb + 8);
+        vectorTagIds.push_back(tagId);
         int drc = mdb_cursor_del(cur, 0);
         if (drc)
           throw MdbError(mdb_strerror(drc));
@@ -1633,6 +1889,11 @@ namespace stardust
       throw MdbError(mdb_strerror(rc));
 
     tx.commit();
+    
+    // Remove vectors from HNSW indices after successful commit
+    for (uint32_t tagId : vectorTagIds) {
+      removeFromHnswIndex(tagId, params.id);
+    }
   }
 
   void Store::deleteEdge(const DeleteEdgeParams &params)

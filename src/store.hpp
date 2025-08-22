@@ -7,6 +7,10 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <memory>
+#include <unordered_map>
+#include <mutex>
+#include <hnswlib/hnswlib.h>
 
 namespace stardust
 {
@@ -259,6 +263,7 @@ namespace stardust
   {
   public:
     explicit Store(Env &e) : env_(e) {}
+    ~Store();
 
     // writes
     CreateNodeResult createNode(const CreateNodeParams &params);
@@ -301,6 +306,25 @@ namespace stardust
 
   private:
     Env &env_;
+    
+    // HNSW index management
+    struct HnswIndex {
+      std::unique_ptr<hnswlib::InnerProductSpace> space;
+      std::unique_ptr<hnswlib::HierarchicalNSW<float>> index;
+      uint16_t dim;
+      size_t max_elements;
+      std::unordered_map<uint64_t, hnswlib::labeltype> nodeToLabel; // nodeId -> internal HNSW label
+      std::unordered_map<hnswlib::labeltype, uint64_t> labelToNode; // internal HNSW label -> nodeId
+      hnswlib::labeltype nextLabel{0};
+    };
+    
+    mutable std::mutex hnswMutex_;
+    std::unordered_map<uint32_t, std::unique_ptr<HnswIndex>> hnswIndices_; // tagId -> index
+    
+    void ensureHnswIndex(uint32_t tagId, uint16_t dim);
+    void addToHnswIndex(uint32_t tagId, uint64_t nodeId, const float* vector, uint16_t dim);
+    void removeFromHnswIndex(uint32_t tagId, uint64_t nodeId);
+    void rebuildHnswIndex(uint32_t tagId);
   };
 
 } // namespace stardust

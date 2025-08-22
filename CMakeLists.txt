@@ -54,6 +54,28 @@ add_library(mongoose STATIC
 )
 target_include_directories(mongoose PUBLIC ${mongoose_SOURCE_DIR})
 
+# ------------- HNSWLIB (header-only) -------------
+
+# Fetch hnswlib source and expose it as a header-only INTERFACE library
+FetchContent_Declare(
+  hnswlib
+  GIT_REPOSITORY https://github.com/nmslib/hnswlib.git
+  GIT_TAG master
+)
+FetchContent_GetProperties(hnswlib)
+if(NOT hnswlib_POPULATED)
+  if(POLICY CMP0169)
+    cmake_policy(SET CMP0169 OLD)
+  endif()
+  FetchContent_Populate(hnswlib)
+  add_library(hnswlib INTERFACE)
+  # Headers live under <repo>/hnswlib, so add the repo root to includes
+  target_include_directories(hnswlib INTERFACE ${hnswlib_SOURCE_DIR})
+endif()
+
+# Make hnswlib headers available to targets that link against stardust
+target_link_libraries(stardust PUBLIC hnswlib)
+
 add_library(stardust_http STATIC
   src/http_server.cpp
 )
