@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph3D, {
   type ForceGraphMethods,
   type NodeObject,
@@ -301,6 +301,21 @@ export const GraphViewer = () => {
 
   // No delayed focusing effect anymore
 
+  const { highlightedLinkIds } = useMemo(() => {
+    const linkIds = new Set<number>();
+    const selectedId = selectedNode?.id != null ? String(selectedNode.id) : null;
+    if (!selectedId) return { highlightedLinkIds: linkIds };
+
+    for (const l of graphData.links) {
+      const srcId = typeof l.source === "object" ? String((l as unknown as { source: { id?: string | number } }).source.id) : String(l.source);
+      const dstId = typeof l.target === "object" ? String((l as unknown as { target: { id?: string | number } }).target.id) : String(l.target);
+      if (srcId === selectedId || dstId === selectedId) {
+        linkIds.add(l.id);
+      }
+    }
+    return { highlightedLinkIds: linkIds };
+  }, [graphData.links, selectedNode]);
+
   return (
     <div ref={containerRef} className="relative w-full h-full">
       <NodeSearch onSearch={(id) => void handleNodeClick(id)} />
@@ -344,6 +359,27 @@ export const GraphViewer = () => {
           sprite.textHeight = 1.5;
           return sprite as unknown as THREE.Object3D;
         }}
+        linkColor={(link) =>
+          highlightedLinkIds.has((link as unknown as { id?: number }).id ?? -1)
+            ? "#cc7a00"
+            : "#999"
+        }
+        linkWidth={(link) =>
+          highlightedLinkIds.has((link as unknown as { id?: number }).id ?? -1)
+            ? 1.5
+            : 1
+        }
+        linkDirectionalParticleSpeed={0.004}
+        linkDirectionalParticles={(link) =>
+          highlightedLinkIds.has((link as unknown as { id?: number }).id ?? -1)
+            ? 4
+            : 0
+        }
+        linkDirectionalParticleWidth={(link) =>
+          highlightedLinkIds.has((link as unknown as { id?: number }).id ?? -1)
+            ? 2
+            : 0
+        }
         linkPositionUpdate={(
           sprite: unknown,
           pos: {
